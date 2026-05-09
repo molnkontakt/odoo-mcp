@@ -51,7 +51,8 @@ class JournalEntryPayload:
 class Validator(Protocol):
     name: str
 
-    def __call__(self, payload: JournalEntryPayload, client: Any) -> None: ...
+    def __call__(self, payload: JournalEntryPayload, client: Any) -> None:
+        """Run the validator. Raise ValidationError on failure."""
 
 
 # ---- Built-in validators -------------------------------------------------

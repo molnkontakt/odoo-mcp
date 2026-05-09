@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
 from odoo_mcp.client import get_client
 from odoo_mcp.instances import Instance
-from odoo_mcp.server import mcp
 from odoo_mcp.validators import (
     JournalEntryPayload,
     JournalLinePayload,

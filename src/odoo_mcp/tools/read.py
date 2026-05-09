@@ -2,9 +2,9 @@
 
 from typing import Any
 
+from odoo_mcp.app import mcp
 from odoo_mcp.client import get_client
 from odoo_mcp.instances import Instance
-from odoo_mcp.server import mcp
 
 
 def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> None:
