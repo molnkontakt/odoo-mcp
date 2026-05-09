@@ -1,9 +1,12 @@
 """Audit log for MCP tool calls.
 
-When `MCP_AUDIT_DB_URL` is set in the environment, every tool call is
-recorded into a `mcp_audit` table. When the env var is absent the audit
-logger becomes a no-op so the server still works for local development
-without any external dependencies.
+When `MCP_AUDIT_DB_URL` is set in the environment, write_safe tool calls
+are recorded into a `mcp_audit` table. When the env var is absent the
+audit logger becomes a silent no-op so the server still works for local
+development without any external dependencies.
+
+Read tools are not audit-logged today (they don't change state). Phase 3
+will extend coverage to write_critical tools.
 
 The table schema (auto-created on first connect) matches the design in
 docs/ARCHITECTURE.md:

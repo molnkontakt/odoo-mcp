@@ -16,7 +16,7 @@ def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> N
     country_ids = list({
         row["country_id"][0]
         for row in partner_rows
-        if row.get("country_id") and isinstance(row["country_id"], list | tuple)
+        if row.get("country_id") and isinstance(row["country_id"], (list, tuple))
     })
     code_map: dict[int, str] = {}
     if country_ids:
@@ -27,7 +27,7 @@ def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> N
 
     for row in partner_rows:
         cid = row.get("country_id")
-        if cid and isinstance(cid, list | tuple):
+        if cid and isinstance(cid, (list, tuple)):
             row["country_code"] = code_map.get(cid[0])
         else:
             row["country_code"] = None
@@ -311,6 +311,35 @@ def odoo_query_account_aggregate(
         {"fields": ["id", "code", "name"]},
     )
     by_code = {a["code"]: a for a in accs}
+    acc_ids = [a["id"] for a in accs]
+
+    # Fetch all lines for all requested accounts in a single query, then
+    # bucket them by account_id locally. Avoids the N+1 round-trip pattern
+    # that scales badly for callers who hand us many account codes.
+    lines: list[dict[str, Any]] = []
+    if acc_ids:
+        domain: list[Any] = [
+            ("account_id", "in", acc_ids),
+            ("parent_state", "=", state),
+            ("date", ">=", date_from),
+            ("date", "<=", date_to),
+        ]
+        lines = client.execute_kw(
+            "account.move.line", "search_read", [domain],
+            {"fields": ["account_id", "debit", "credit"]},
+        )
+
+    buckets: dict[int, dict[str, float | int]] = {
+        aid: {"debit": 0.0, "credit": 0.0, "count": 0} for aid in acc_ids
+    }
+    for line in lines:
+        aid = line["account_id"][0]  # [id, name] tuple from XML-RPC
+        bucket = buckets.get(aid)
+        if bucket is None:
+            continue  # shouldn't happen given the domain, but be defensive
+        bucket["debit"] += line["debit"]
+        bucket["credit"] += line["credit"]
+        bucket["count"] += 1
 
     results = []
     for code in account_codes:
@@ -325,24 +354,15 @@ def odoo_query_account_aggregate(
                 "line_count": 0,
             })
             continue
-        domain: list[Any] = [
-            ("account_id", "=", acc["id"]),
-            ("parent_state", "=", state),
-            ("date", ">=", date_from),
-            ("date", "<=", date_to),
-        ]
-        lines = client.execute_kw(
-            "account.move.line", "search_read", [domain],
-            {"fields": ["debit", "credit"]},
-        )
-        debit = sum(line["debit"] for line in lines)
-        credit = sum(line["credit"] for line in lines)
+        bucket = buckets[acc["id"]]
+        debit = float(bucket["debit"])
+        credit = float(bucket["credit"])
         results.append({
             "account_code": acc["code"],
             "account_name": acc["name"],
             "debit_sum": round(debit, 2),
             "credit_sum": round(credit, 2),
             "balance": round(debit - credit, 2),
-            "line_count": len(lines),
+            "line_count": int(bucket["count"]),
         })
     return sorted(results, key=lambda r: r["account_code"])

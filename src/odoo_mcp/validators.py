@@ -4,10 +4,10 @@ The framework is intentionally simple: each validator is a callable that
 takes the proposed payload and raises `ValidationError` if it rejects.
 Validators can be registered globally or chosen per call site.
 
-This module ships with two built-ins:
-- `BalanceValidator` (always on): debit total must equal credit total
-- `AccountsExistValidator` (always on): every referenced account_code resolves
-- `TaxTagsExistValidator` (always on): every tag_code resolves on the instance
+This module ships with three built-ins, all always on:
+- `BalanceValidator`: debit total must equal credit total
+- `AccountsExistValidator`: every referenced account_code resolves
+- `TaxTagsExistValidator`: every tag_code resolves on the instance
 
 Domain-specific validators (e.g. Swedish VAT one-sided reverse charge,
 period locks) can be loaded from `MCP_VALIDATORS_PATH` — a `:`-separated

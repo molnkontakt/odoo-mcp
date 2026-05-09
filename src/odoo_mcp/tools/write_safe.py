@@ -1,6 +1,8 @@
 """Write tools that create drafts only — they never post or otherwise commit
-data that the user can't easily reverse. No `confirm` flag is required, but
-every call is audit-logged.
+data that the user can't easily reverse. No `confirm` flag is required.
+
+Calls are audit-logged when `MCP_AUDIT_DB_URL` is configured (see
+`audit.py`); otherwise audit logging is a silent no-op.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ def _resolve_journal(client: Any, journal_code: str | None, instance: str) -> in
         {"fields": ["id", "code", "name"], "limit": 1},
     )
     if not journals:
-        raise ValueError(
+        raise ValidationError(
             f"No journal found on {instance} (code={journal_code or '<general>'})"
         )
     return int(journals[0]["id"])
@@ -44,7 +46,7 @@ def _resolve_account_ids(
     by_code = {a["code"]: int(a["id"]) for a in accs}
     missing = [c for c in codes if c not in by_code]
     if missing:
-        raise ValueError(
+        raise ValidationError(
             f"Account code(s) not found on {instance}: {', '.join(missing)}"
         )
     return by_code
@@ -63,7 +65,7 @@ def _resolve_tax_tag_ids(
     by_code = {t["name"]: int(t["id"]) for t in tags}
     missing = [c for c in codes if c not in by_code]
     if missing:
-        raise ValueError(
+        raise ValidationError(
             f"Tax tag(s) not found on {instance}: {', '.join(missing)}"
         )
     return by_code
