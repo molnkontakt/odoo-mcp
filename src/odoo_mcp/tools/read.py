@@ -333,7 +333,10 @@ def odoo_query_account_aggregate(
         aid: {"debit": 0.0, "credit": 0.0, "count": 0} for aid in acc_ids
     }
     for line in lines:
-        aid = line["account_id"][0]  # [id, name] tuple from XML-RPC
+        raw_aid = line.get("account_id")
+        if not raw_aid:
+            continue  # account_id is required, but be defensive
+        aid = raw_aid[0]  # [id, name] tuple from XML-RPC
         bucket = buckets.get(aid)
         if bucket is None:
             continue  # shouldn't happen given the domain, but be defensive
@@ -355,8 +358,8 @@ def odoo_query_account_aggregate(
             })
             continue
         bucket = buckets[acc["id"]]
-        debit = float(bucket["debit"])
-        credit = float(bucket["credit"])
+        debit = bucket["debit"]
+        credit = bucket["credit"]
         results.append({
             "account_code": acc["code"],
             "account_name": acc["name"],
