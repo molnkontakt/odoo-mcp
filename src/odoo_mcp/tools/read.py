@@ -119,15 +119,15 @@ def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
 
     move["lines"] = [
         {
-            "id": l["id"],
-            "name": l["name"],
-            "account_code": acc_map.get(l["account_id"][0]) if l.get("account_id") else None,
-            "debit": l["debit"],
-            "credit": l["credit"],
-            "partner_id": l["partner_id"][0] if l.get("partner_id") else None,
-            "tax_tag_codes": [tag_map[tid] for tid in (l.get("tax_tag_ids") or []) if tid in tag_map],
+            "id": line["id"],
+            "name": line["name"],
+            "account_code": acc_map.get(line["account_id"][0]) if line.get("account_id") else None,
+            "debit": line["debit"],
+            "credit": line["credit"],
+            "partner_id": line["partner_id"][0] if line.get("partner_id") else None,
+            "tax_tag_codes": [tag_map[tid] for tid in (line.get("tax_tag_ids") or []) if tid in tag_map],
         }
-        for l in line_data
+        for line in line_data
     ]
     del move["line_ids"]
     return move
@@ -176,8 +176,8 @@ def odoo_get_account_balance(
         "account.move.line", "search_read", [domain],
         {"fields": ["debit", "credit"]},
     )
-    debit = sum(l["debit"] for l in lines)
-    credit = sum(l["credit"] for l in lines)
+    debit = sum(line["debit"] for line in lines)
+    credit = sum(line["credit"] for line in lines)
     return {
         "account_code": acc["code"],
         "account_name": acc["name"],
