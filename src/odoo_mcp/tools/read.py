@@ -7,6 +7,33 @@ from odoo_mcp.instances import Instance
 from odoo_mcp.server import mcp
 
 
+def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> None:
+    """Replace `country_id` (Odoo [id, name] tuple) with `country_code` in-place.
+
+    Mutates each partner row: removes `country_id`, sets `country_code` to the
+    ISO code or None. Single batched lookup avoids N+1 queries.
+    """
+    country_ids = list({
+        row["country_id"][0]
+        for row in partner_rows
+        if row.get("country_id") and isinstance(row["country_id"], list | tuple)
+    })
+    code_map: dict[int, str] = {}
+    if country_ids:
+        countries = client.execute_kw(
+            "res.country", "read", [country_ids], {"fields": ["id", "code"]}
+        )
+        code_map = {c["id"]: c["code"] for c in countries}
+
+    for row in partner_rows:
+        cid = row.get("country_id")
+        if cid and isinstance(cid, list | tuple):
+            row["country_code"] = code_map.get(cid[0])
+        else:
+            row["country_code"] = None
+        row.pop("country_id", None)
+
+
 @mcp.tool()
 def odoo_search_partners(
     instance: Instance,
@@ -21,7 +48,8 @@ def odoo_search_partners(
         limit: max results (default 20)
 
     Returns:
-        List of {id, name, vat, country_code, is_company}
+        List of {id, name, vat, country_code, is_company}.
+        `country_code` is always present (None when partner has no country).
     """
     client = get_client(instance)
     domain = ["|", ("name", "ilike", query), ("vat", "ilike", query)]
@@ -29,15 +57,33 @@ def odoo_search_partners(
     rows = client.execute_kw(
         "res.partner", "search_read", [domain], {"fields": fields, "limit": limit}
     )
-    # Flatten country_id [id, name] tuple to country_code lookup
-    for r in rows:
-        if r.get("country_id"):
-            country = client.execute_kw(
-                "res.country", "read", [r["country_id"][0]], {"fields": ["code"]}
-            )
-            r["country_code"] = country[0]["code"] if country else None
-            del r["country_id"]
+    _resolve_country_codes(client, rows)
     return rows
+
+
+@mcp.tool()
+def odoo_get_partner(instance: Instance, partner_id: int) -> dict[str, Any]:
+    """Get full info for a single res.partner.
+
+    Args:
+        instance: "prod" or "dev"
+        partner_id: res.partner ID
+
+    Returns:
+        Dict with id, name, display_name, vat, country_code, is_company,
+        email, phone, street, city, zip, customer/supplier rank.
+    """
+    client = get_client(instance)
+    fields = [
+        "id", "name", "display_name", "vat", "country_id", "is_company",
+        "email", "phone", "street", "city", "zip",
+        "customer_rank", "supplier_rank",
+    ]
+    rows = client.execute_kw("res.partner", "read", [partner_id], {"fields": fields})
+    if not rows:
+        raise ValueError(f"Partner {partner_id} not found on {instance}")
+    _resolve_country_codes(client, rows)
+    return rows[0]
 
 
 @mcp.tool()
@@ -62,7 +108,7 @@ def odoo_search_invoices(
         limit: max results (default 50)
     """
     client = get_client(instance)
-    domain = [("date", ">=", date_from), ("date", "<=", date_to)]
+    domain: list[Any] = [("date", ">=", date_from), ("date", "<=", date_to)]
     if move_type:
         domain.append(("move_type", "=", move_type))
     if state:
@@ -74,6 +120,49 @@ def odoo_search_invoices(
     return client.execute_kw(
         "account.move", "search_read", [domain],
         {"fields": fields, "limit": limit, "order": "date desc"},
+    )
+
+
+@mcp.tool()
+def odoo_search_journal_entries(
+    instance: Instance,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    ref: str | None = None,
+    state: str | None = None,
+    journal_code: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Search account.move with `move_type='entry'` (manual journal entries).
+
+    Useful for finding e.g. period-end VAT bookings, corrections, opening
+    balances — anything that isn't a standard invoice/bill.
+
+    Args:
+        instance: "prod" or "dev"
+        date_from: optional YYYY-MM-DD inclusive
+        date_to: optional YYYY-MM-DD inclusive
+        ref: optional ilike match against the move reference
+        state: optional, "draft" or "posted"
+        journal_code: optional filter on journal short code (e.g. "MISC")
+        limit: max results (default 50)
+    """
+    client = get_client(instance)
+    domain: list[Any] = [("move_type", "=", "entry")]
+    if date_from:
+        domain.append(("date", ">=", date_from))
+    if date_to:
+        domain.append(("date", "<=", date_to))
+    if ref:
+        domain.append(("ref", "ilike", ref))
+    if state:
+        domain.append(("state", "=", state))
+    if journal_code:
+        domain.append(("journal_id.code", "=", journal_code))
+    fields = ["id", "name", "ref", "date", "state", "journal_id"]
+    return client.execute_kw(
+        "account.move", "search_read", [domain],
+        {"fields": fields, "limit": limit, "order": "date desc, id desc"},
     )
 
 
@@ -100,9 +189,9 @@ def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
         {"fields": ["id", "name", "account_id", "debit", "credit",
                     "partner_id", "tax_tag_ids"]},
     )
-    # Resolve account → code, tags → codes
+    # Resolve account → code, tags → codes (batched)
     acc_ids = list({line["account_id"][0] for line in line_data if line.get("account_id")})
-    acc_map = {}
+    acc_map: dict[int, str] = {}
     if acc_ids:
         accs = client.execute_kw(
             "account.account", "read", [acc_ids], {"fields": ["id", "code"]}
@@ -110,7 +199,7 @@ def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
         acc_map = {a["id"]: a["code"] for a in accs}
 
     tag_ids = list({tid for line in line_data for tid in (line.get("tax_tag_ids") or [])})
-    tag_map = {}
+    tag_map: dict[int, str] = {}
     if tag_ids:
         tags = client.execute_kw(
             "account.account.tag", "read", [tag_ids], {"fields": ["id", "name"]}
@@ -148,12 +237,12 @@ def odoo_get_account_balance(
 
     Args:
         instance: "prod" or "dev"
-        account_code: BAS account code, e.g. "2611" or "6231"
+        account_code: account code, e.g. "2611" or "6231"
         date_from: optional start date inclusive
         date_to: optional end date inclusive
 
     Returns:
-        {account_code, account_name, debit_sum, credit_sum, balance}
+        {account_code, account_name, debit_sum, credit_sum, balance, line_count}
     """
     client = get_client(instance)
     accs = client.execute_kw(
@@ -186,3 +275,74 @@ def odoo_get_account_balance(
         "balance": round(debit - credit, 2),
         "line_count": len(lines),
     }
+
+
+@mcp.tool()
+def odoo_query_account_aggregate(
+    instance: Instance,
+    account_codes: list[str],
+    date_from: str,
+    date_to: str,
+    state: str = "posted",
+) -> list[dict[str, Any]]:
+    """Aggregate debit/credit per account across multiple accounts in a period.
+
+    Generic building block for client-side reporting. Returns one row per
+    account code, with `debit_sum`, `credit_sum`, and `balance` (= debit-credit).
+
+    Args:
+        instance: "prod" or "dev"
+        account_codes: list of account codes to aggregate, e.g. ["2611", "2614", "2641"]
+        date_from: YYYY-MM-DD inclusive
+        date_to: YYYY-MM-DD inclusive
+        state: "posted" (default) or "draft" — applied to the parent move
+
+    Returns:
+        List of {account_code, account_name, debit_sum, credit_sum, balance, line_count},
+        ordered by account_code. Accounts not found or with no activity are still
+        returned with zeros (so callers can rely on a stable result shape).
+    """
+    if not account_codes:
+        return []
+    client = get_client(instance)
+    accs = client.execute_kw(
+        "account.account", "search_read",
+        [[("code", "in", account_codes)]],
+        {"fields": ["id", "code", "name"]},
+    )
+    by_code = {a["code"]: a for a in accs}
+
+    results = []
+    for code in account_codes:
+        acc = by_code.get(code)
+        if acc is None:
+            results.append({
+                "account_code": code,
+                "account_name": None,
+                "debit_sum": 0.0,
+                "credit_sum": 0.0,
+                "balance": 0.0,
+                "line_count": 0,
+            })
+            continue
+        domain: list[Any] = [
+            ("account_id", "=", acc["id"]),
+            ("parent_state", "=", state),
+            ("date", ">=", date_from),
+            ("date", "<=", date_to),
+        ]
+        lines = client.execute_kw(
+            "account.move.line", "search_read", [domain],
+            {"fields": ["debit", "credit"]},
+        )
+        debit = sum(line["debit"] for line in lines)
+        credit = sum(line["credit"] for line in lines)
+        results.append({
+            "account_code": acc["code"],
+            "account_name": acc["name"],
+            "debit_sum": round(debit, 2),
+            "credit_sum": round(credit, 2),
+            "balance": round(debit - credit, 2),
+            "line_count": len(lines),
+        })
+    return sorted(results, key=lambda r: r["account_code"])
