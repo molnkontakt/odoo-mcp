@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "odoo-mcp"
+version = "0.1.0"
+description = "MCP server for Odoo (multi-instance, XML-RPC, with safety controls)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LGPL-3.0-only"
+dependencies = [
+    "fastmcp>=0.2.0",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+odoo-mcp = "odoo_mcp.server:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
