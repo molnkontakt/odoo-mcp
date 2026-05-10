@@ -54,7 +54,7 @@ at most 2 entries (one per instance).
 |------|---------------------|--------|----------|
 | **read** | Never | Shipped | `search_invoices`, `get_account_balance`, `query_account_aggregate` |
 | **write_safe** | Auto (creates draft) | Shipped | `create_journal_entry_draft`, `add_tax_tags`, `set_partner` |
-| **write_critical** | Requires `confirm=True` | Shipped | `post_journal_entry`, `register_payment` |
+| **write_critical** | Requires `confirm=True` | Shipped | `post_journal_entry`, `register_payment`, `reverse_move` |
 
 ### Validation before writes
 

@@ -222,3 +222,111 @@ class TestRegisterPayment:
                 instance="dev", move_id=100, journal_code="ZZZZ",
                 amount=494.70, confirm=False,
             )
+
+
+class TestReverseMove:
+    @staticmethod
+    def _state_for_reverse(state: str = "posted") -> dict[str, Any]:
+        return {
+            "account.move": {
+                "read": [
+                    {**_draft_invoice(state), "journal_id": [9, "Misc"]},
+                ],
+            },
+            "account.journal": {
+                "search_read": [{"id": 9, "code": "MISC"}],
+            },
+            "account.move.reversal": {
+                "fields_get": {
+                    "reason": {}, "journal_id": {}, "date": {},
+                    "move_ids": {}, "new_move_ids": {},
+                },
+                "create": 555,
+                "refund_moves": True,
+                "read": [{"new_move_ids": [3965]}],
+            },
+        }
+
+    def test_preview_returns_summary(self, patched):
+        state = self._state_for_reverse()
+        patched.state = state
+        result = write_critical.odoo_reverse_move(
+            instance="dev", move_id=100,
+            reason="Reverse test", confirm=False,
+        )
+        assert result["preview"] is True
+        assert result["validators_passed"] is True
+        assert result["original"]["move_id"] == 100
+        assert result["reason"] == "Reverse test"
+        # No reversal call when previewing
+        assert not any(
+            c[0] == "account.move.reversal" and c[1] in ("create", "refund_moves")
+            for c in patched.calls
+        )
+
+    def test_confirm_creates_reversal(self, patched):
+        # When the wizard's `read` is called for new_move_ids, then a third
+        # account.move.read happens for _summarize_move(reversal). We need
+        # multiple account.move.read responses.
+        patched.state = self._state_for_reverse()
+        # account.move.read returns the same dict by default; override for
+        # the reversal lookup at the end:
+        original = {**_draft_invoice("posted"), "journal_id": [9, "Misc"]}
+        reversal = {
+            **_draft_invoice("posted"),
+            "id": 3965,
+            "name": "MISC/2026/0091",
+            "journal_id": [9, "Misc"],
+        }
+        moves_iter = iter([
+            [original],   # initial _summarize_move(move_id)
+            [original],   # journal_id read for default journal
+            [reversal],   # _summarize_move on the new reversal
+        ])
+        patched.state["account.move"]["read"] = lambda args, kwargs: next(moves_iter)
+
+        result = write_critical.odoo_reverse_move(
+            instance="dev", move_id=100,
+            reason="Reverse test", confirm=True,
+        )
+        assert result["reversed"] is True
+        assert result["replayed"] is False
+        assert len(result["reversal"]) == 1
+        assert result["reversal"][0]["move_id"] == 3965
+        # Wizard was created and refund_moves invoked
+        assert any(
+            c[0] == "account.move.reversal" and c[1] == "create"
+            for c in patched.calls
+        )
+        assert any(
+            c[0] == "account.move.reversal" and c[1] == "refund_moves"
+            for c in patched.calls
+        )
+
+    def test_rejects_draft_move(self, patched):
+        patched.state = self._state_for_reverse(state="draft")
+        with pytest.raises(ValidationError, match="state 'draft'"):
+            write_critical.odoo_reverse_move(
+                instance="dev", move_id=100,
+                reason="x", confirm=False,
+            )
+
+    def test_idempotency_replay(self, patched, monkeypatch):
+        prior = {
+            "id": 7,
+            "ts": "2026-05-10T07:00:00Z",
+            "tool": "odoo_reverse_move",
+            "response_summary": "reversed move 100 (cached)",
+            "params": {},
+        }
+        monkeypatch.setattr(
+            write_critical, "find_previous_success",
+            lambda **kwargs: prior,
+        )
+        result = write_critical.odoo_reverse_move(
+            instance="dev", move_id=100,
+            reason="Reverse test", confirm=True,
+            idempotency_key="rev-001",
+        )
+        assert result["replayed"] is True
+        assert result["previous_summary"] == "reversed move 100 (cached)"
