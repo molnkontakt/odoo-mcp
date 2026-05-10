@@ -54,7 +54,7 @@ at most 2 entries (one per instance).
 |------|---------------------|--------|----------|
 | **read** | Never | Shipped | `search_invoices`, `get_account_balance`, `query_account_aggregate` |
 | **write_safe** | Auto (creates draft) | Shipped | `create_journal_entry_draft`, `add_tax_tags`, `set_partner` |
-| **write_critical** | Requires `confirm=True` | **Planned (Phase 3)** | `post_journal_entry`, `unlink_move`, `update_posted_invoice` |
+| **write_critical** | Requires `confirm=True` | Shipped | `post_journal_entry`, `register_payment` |
 
 ### Validation before writes
 
@@ -73,9 +73,9 @@ etc.). The core stays domain-agnostic.
 
 ### Audit log
 
-When `MCP_AUDIT_DB_URL` is set in the environment, every write_safe
-tool call records a row to a `mcp_audit` table on that PostgreSQL
-instance. The table is auto-created on first connect:
+When `MCP_AUDIT_DB_URL` is set in the environment, every `write_safe` and
+`write_critical` tool call records a row to a `mcp_audit` table on that
+PostgreSQL instance. The table is auto-created on first connect:
 
 ```sql
 CREATE TABLE mcp_audit (
@@ -87,16 +87,25 @@ CREATE TABLE mcp_audit (
     params          JSONB,
     response_summary TEXT,          -- e.g. "created move id=3960"
     error           TEXT,
-    duration_ms     INTEGER
+    duration_ms     INTEGER,
+    idempotency_key TEXT
 );
+CREATE UNIQUE INDEX mcp_audit_idempotency_idx
+    ON mcp_audit (idempotency_key)
+    WHERE idempotency_key IS NOT NULL AND error IS NULL;
 ```
 
 Read tools are not audit-logged today (they don't change state). When
 `MCP_AUDIT_DB_URL` is unset, the audit logger is a silent no-op so
 local development needs no Postgres.
 
-> **Phase 3 plan:** extend audit logging to write_critical tools and add
-> request deduplication so a re-issued `confirm=True` doesn't double-post.
+#### Idempotency
+
+`write_critical` tools accept an `idempotency_key`. If audit-log is
+enabled and a row with that key already exists with `error IS NULL`, the
+tool short-circuits and returns the previous summary instead of acting
+again. Lets clients safely retry transient transport errors without
+double-posting or double-charging.
 
 ### Auth
 
@@ -123,11 +132,11 @@ See [TOOLS.md](TOOLS.md) for the complete reference per shipped/planned tier.
 - Audit-log infrastructure with no-op fallback
 - Test suite (pytest + MockClient)
 
-### Phase 3 — Write critical + Hosting (planned)
+### Phase 3 — Write critical + Hosting ✅ Shipped
 - `odoo_post_journal_entry` + `odoo_register_payment` with `confirm=True`
-- Extended validators (period lock against submitted returns, etc.)
-- Audit-log coverage for critical writes + idempotency tokens
-- Deploy documentation (systemd, Docker, supergateway-style HTTP transport)
+- Post-time validators (`PostStateValidator`, `PostBalanceValidator`)
+- Audit-log coverage for critical writes + idempotency keys
+- Deploy documentation (systemd, Docker, HTTP gateway)
 
 ### Phase 4 — Polish (planned)
 - Container image
