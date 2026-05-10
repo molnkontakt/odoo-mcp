@@ -5,10 +5,15 @@ Every tool here:
 - Requires `confirm=True` in the payload. Without it the tool returns a
   preview/dry-run summary so the LLM (and the human reading the
   transcript) can sanity-check the proposed action before authorizing.
-- Runs the post-time validator chain (`Registry.run_post`).
-- Audit-logs the call. When `idempotency_key` is supplied the tool
-  short-circuits if a successful prior call exists, returning the
-  recorded summary instead of double-acting.
+- Runs tool-specific pre-checks before doing the write (the post-time
+  validator chain on `odoo_post_journal_entry`; existence + state checks
+  on `odoo_register_payment`).
+- Audit-logs the *confirmed* call. Preview calls (`confirm=False`) are
+  not audit-logged because they don't change state.
+- When `idempotency_key` is supplied (only meaningful for `confirm=True`),
+  the tool short-circuits if a successful prior call exists for the same
+  `(instance, tool, key)` triple, returning the recorded summary instead
+  of double-acting.
 """
 
 from __future__ import annotations
@@ -88,9 +93,15 @@ def odoo_post_journal_entry(
     """
     client = get_client(instance)
 
-    # Idempotency short-circuit (only meaningful for confirm=True)
+    # Idempotency short-circuit (only meaningful for confirm=True).
+    # Scoped to (instance, tool, key) so a key reused across
+    # environments/tools cannot replay the wrong outcome.
     if confirm and idempotency_key:
-        prior = find_previous_success(idempotency_key)
+        prior = find_previous_success(
+            idempotency_key=idempotency_key,
+            instance=instance,
+            tool="odoo_post_journal_entry",
+        )
         if prior:
             return {
                 "posted": True,
@@ -182,7 +193,11 @@ def odoo_register_payment(
     client = get_client(instance)
 
     if confirm and idempotency_key:
-        prior = find_previous_success(idempotency_key)
+        prior = find_previous_success(
+            idempotency_key=idempotency_key,
+            instance=instance,
+            tool="odoo_register_payment",
+        )
         if prior:
             return {
                 "registered": True,

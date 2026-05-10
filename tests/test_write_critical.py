@@ -3,6 +3,7 @@ idempotency."""
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
 
 import pytest
@@ -119,6 +120,51 @@ class TestPostJournalEntry:
             write_critical.odoo_post_journal_entry(
                 instance="dev", move_id=999, confirm=False,
             )
+
+    def test_idempotency_replay_short_circuits(self, patched, monkeypatch):
+        """When a prior successful call exists with the same key, return the
+        cached summary instead of doing the write again."""
+        from datetime import datetime
+
+        prior = {
+            "id": 42,
+            "ts": datetime(2026, 5, 9, 12, 0, tzinfo=UTC),
+            "tool": "odoo_post_journal_entry",
+            "response_summary": "posted move id=100 (cached)",
+            "params": {},
+        }
+        monkeypatch.setattr(
+            write_critical, "find_previous_success",
+            lambda **kwargs: prior,
+        )
+        result = write_critical.odoo_post_journal_entry(
+            instance="dev", move_id=100, confirm=True,
+            idempotency_key="abc-123",
+        )
+        assert result["replayed"] is True
+        assert result["previous_summary"] == "posted move id=100 (cached)"
+        # No action_post call when replayed
+        assert not any(c[1] == "action_post" for c in patched.calls)
+
+    def test_idempotency_only_active_with_confirm(self, patched, monkeypatch):
+        """A preview call (confirm=False) should never short-circuit even
+        if a prior success exists; previews are read-only and informational."""
+        called = []
+        monkeypatch.setattr(
+            write_critical, "find_previous_success",
+            lambda **kwargs: called.append(kwargs) or None,
+        )
+        patched.state = {
+            "account.move": {"read": [_draft_invoice("draft")]},
+            "account.move.line": {"search_read": _balanced_lines()},
+        }
+        result = write_critical.odoo_post_journal_entry(
+            instance="dev", move_id=100, confirm=False,
+            idempotency_key="abc-123",
+        )
+        assert result["preview"] is True
+        # Lookup should not happen on preview
+        assert called == []
 
 
 class TestRegisterPayment:
