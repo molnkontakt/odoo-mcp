@@ -20,9 +20,8 @@ over XML-RPC.
 ```
 
 The server itself is stateless except for an in-memory cache of the
-authenticated `uid` per instance. All persistence (audit log, request
-deduplication for confirmed writes) is delegated to an external
-PostgreSQL.
+authenticated `uid` per instance. When configured, audit-log persistence is
+delegated to an external PostgreSQL — see `MCP_AUDIT_DB_URL` below.
 
 ## Why XML-RPC
 
@@ -51,28 +50,32 @@ at most 2 entries (one per instance).
 
 ### Three-tier tools
 
-| Tier | Confirmation needed | Examples |
-|------|---------------------|----------|
-| **read** | Never | `search_invoices`, `get_account_balance`, `query_account_aggregate` |
-| **write_safe** | Auto (creates draft) | `create_journal_entry_draft`, `create_partner` |
-| **write_critical** | Requires `confirm=True` + audit | `post_journal_entry`, `unlink_move`, `update_posted_invoice` |
+| Tier | Confirmation needed | Status | Examples |
+|------|---------------------|--------|----------|
+| **read** | Never | Shipped | `search_invoices`, `get_account_balance`, `query_account_aggregate` |
+| **write_safe** | Auto (creates draft) | Shipped | `create_journal_entry_draft`, `add_tax_tags`, `set_partner` |
+| **write_critical** | Requires `confirm=True` | **Planned (Phase 3)** | `post_journal_entry`, `unlink_move`, `update_posted_invoice` |
 
 ### Validation before writes
 
-Before a `write_critical` tool accepts its payload, domain-specific
-validations run (pluggable):
+Each write tool runs its payload through a registry of validators. The
+core ships three built-ins, all on by default:
 
-- **Balance:** debit ≠ credit is rejected (Odoo enforces this anyway, but
-  we surface a clearer error earlier in the flow)
-- **Domain-specific rules:** load validators from a configurable plugin
-  directory (e.g. Swedish VAT validators like "one-sided reverse charge",
-  period lock against submitted VAT returns, etc.) — the core stays
-  domain-agnostic
+- **BalanceValidator** — debit total must equal credit total (Decimal-safe)
+- **AccountsExistValidator** — every referenced `account_code` resolves
+- **TaxTagsExistValidator** — every `tag_code` resolves on the instance
+
+External validators can be plugged in by setting `MCP_VALIDATORS_PATH` to
+a colon-separated list of importable Python modules. Each module must
+expose `register(registry)` and may add its own validators (e.g. Swedish
+VAT one-sided reverse charge, period locks against submitted VAT returns,
+etc.). The core stays domain-agnostic.
 
 ### Audit log
 
-Every tool call (read AND write) is logged to a configurable PostgreSQL
-instance:
+When `MCP_AUDIT_DB_URL` is set in the environment, every write_safe
+tool call records a row to a `mcp_audit` table on that PostgreSQL
+instance. The table is auto-created on first connect:
 
 ```sql
 CREATE TABLE mcp_audit (
@@ -88,6 +91,13 @@ CREATE TABLE mcp_audit (
 );
 ```
 
+Read tools are not audit-logged today (they don't change state). When
+`MCP_AUDIT_DB_URL` is unset, the audit logger is a silent no-op so
+local development needs no Postgres.
+
+> **Phase 3 plan:** extend audit logging to write_critical tools and add
+> request deduplication so a re-issued `confirm=True` doesn't double-post.
+
 ### Auth
 
 - Odoo credentials read from environment variables (typically populated by
@@ -95,58 +105,34 @@ CREATE TABLE mcp_audit (
 - Recommendation: use a dedicated non-admin user so Odoo's own permission
   controls act as an additional safety layer
 
-## Tool catalog (planned)
+## Tool catalog
 
-### Read
-
-- `odoo_search_partners(instance, query, limit?)` — ilike on name/VAT
-- `odoo_get_partner(instance, partner_id)` — full info incl. country, VAT
-- `odoo_search_invoices(instance, date_from, date_to, partner_id?, state?, move_type?)`
-- `odoo_get_invoice(instance, move_id)` — header + lines + payments
-- `odoo_get_account_balance(instance, account_code, date_from?, date_to?)`
-- `odoo_search_journal_entries(instance, ref?, date_from?, date_to?, state?)`
-- `odoo_query_account_aggregate(instance, account_codes, date_from, date_to, group_by?)`
-  — generic multi-account sum, useful for building reports client-side
-
-### Write — safe (creates drafts)
-
-- `odoo_create_journal_entry_draft(instance, date, ref, lines)`
-  — `lines: [{account_code, debit, credit, name, tax_tag_codes?, partner_id?}]`
-- `odoo_add_tax_tags(instance, line_ids, tag_codes)`
-- `odoo_set_partner(instance, move_id, partner_id)`
-
-### Write — critical (requires confirm)
-
-- `odoo_post_journal_entry(instance, move_id, confirm=True)`
-- `odoo_register_payment(instance, move_id, journal_id, amount, confirm=True)`
-
-### No write-only-direct (always create draft, then post separately)
-
-Design principle: never a single tool that both creates AND posts in the
-same call. Forces the LLM to pause and show the draft to the user before
-posting.
+See [TOOLS.md](TOOLS.md) for the complete reference per shipped/planned tier.
 
 ## Roadmap
 
-### Phase 1 — MVP (read-only) ✅
+### Phase 1 — Read-only ✅ Shipped
 - FastMCP skeleton + XML-RPC client
-- All `odoo_*search/get` tools
-- Local stdio testing against dev
+- `odoo_search_partners`, `odoo_get_partner`, `odoo_search_invoices`,
+  `odoo_search_journal_entries`, `odoo_get_invoice`,
+  `odoo_get_account_balance`, `odoo_query_account_aggregate`
 
-### Phase 2 — Write safe
-- `create_journal_entry_draft` + `add_tax_tags` + `set_partner`
-- Validation before create (balance, account codes exist, tags exist)
-- Audit table + insert helper (PostgreSQL)
+### Phase 2 — Write safe + audit log ✅ Shipped
+- `odoo_create_journal_entry_draft`, `odoo_add_tax_tags`, `odoo_set_partner`
+- Validator framework (Balance, AccountsExist, TaxTagsExist) + plugin loader
+- Audit-log infrastructure with no-op fallback
+- Test suite (pytest + MockClient)
 
-### Phase 3 — Write critical + Hosting
-- `post_journal_entry` + `register_payment` with confirm pattern
-- Pluggable validators
-- Deploy documentation (systemd, Docker, supergateway)
+### Phase 3 — Write critical + Hosting (planned)
+- `odoo_post_journal_entry` + `odoo_register_payment` with `confirm=True`
+- Extended validators (period lock against submitted returns, etc.)
+- Audit-log coverage for critical writes + idempotency tokens
+- Deploy documentation (systemd, Docker, supergateway-style HTTP transport)
 
-### Phase 4 — Polish
-- README + tool docstrings
-- Test suite (pytest against mock-Odoo + integration tests against dev)
-- CHANGELOG template
+### Phase 4 — Polish (planned)
+- Container image
+- Integration test suite against an ephemeral Odoo Docker
+- CHANGELOG template + release automation
 
 ## Open questions
 
@@ -156,6 +142,3 @@ posting.
 - **Rate limiting:** is it needed?
 - **Dry-run mode** for write tools? Return a summary of what would have
   happened without actually doing it.
-- **Tool output:** return structured data + human-readable summary, or
-  only structured? LLMs communicate better when there is summary text
-  available.

@@ -1,18 +1,16 @@
-"""FastMCP server entry point.
+"""CLI entrypoint for the odoo-mcp FastMCP server.
 
-Tools are registered from `odoo_mcp.tools.*` modules.
+The actual `FastMCP` instance lives in `app.py` so tool modules can import
+it without creating an import cycle through this module.
 """
 
-from fastmcp import FastMCP
-
-mcp = FastMCP("odoo-mcp")
+from odoo_mcp.app import mcp
 
 
 def main() -> None:
-    """CLI entrypoint — runs the MCP server over stdio."""
+    """Run the MCP server over stdio."""
     # Tool modules register themselves on import via @mcp.tool()
-    from odoo_mcp.tools import read  # noqa: F401
-    # from odoo_mcp.tools import write_safe  # noqa: F401  (Phase 2)
+    from odoo_mcp.tools import read, write_safe  # noqa: F401
     # from odoo_mcp.tools import write_critical  # noqa: F401  (Phase 3)
     mcp.run()
 
