@@ -91,7 +91,7 @@ CREATE TABLE mcp_audit (
     idempotency_key TEXT
 );
 CREATE UNIQUE INDEX mcp_audit_idempotency_idx
-    ON mcp_audit (idempotency_key)
+    ON mcp_audit (instance, tool, idempotency_key)
     WHERE idempotency_key IS NOT NULL AND error IS NULL;
 ```
 

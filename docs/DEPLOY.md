@@ -211,7 +211,7 @@ ORDER BY ts DESC LIMIT 50;
 SELECT tool, COUNT(*) AS total,
        COUNT(*) FILTER (WHERE idempotency_key IS NOT NULL) AS with_idempotency
 FROM mcp_audit
-WHERE tool LIKE 'odoo_post%' OR tool LIKE 'odoo_register_payment'
+WHERE tool LIKE 'odoo_post%' OR tool = 'odoo_register_payment'
 GROUP BY tool;
 ```
 
@@ -246,5 +246,6 @@ sudo systemctl restart odoo-mcp
 docker pull ghcr.io/molnkontakt/odoo-mcp:latest
 ```
 
-Read [CHANGELOG.md](../CHANGELOG.md) (planned for Phase 4) before each
-upgrade — write_critical tool semantics may evolve.
+A `CHANGELOG.md` is planned for Phase 4 and is not yet available. Until
+then, review release notes/commit history before each upgrade —
+`write_critical` tool semantics may evolve.
