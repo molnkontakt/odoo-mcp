@@ -4,9 +4,12 @@ MCP server for Odoo. Gives Claude (or any other MCP client) controlled
 access to one or more Odoo instances via XML-RPC. Built for
 multi-environment setups (typically prod + dev).
 
-**Status:** Phases 1–3 are implemented (read tools, write_safe + audit log,
-write_critical with confirm + idempotency). Phase 4 polish (CHANGELOG,
-container image, integration tests) is planned —
+**Status:** Phases 1–3 are implemented and **verified working end-to-end**
+against a self-hosted Odoo 19 instance — read tools, write_safe + audit log,
+write_critical with confirm + idempotency. The full smoke-test
+(search → create draft → preview-post → confirmed-post → reverse via the
+in-Odoo wizard) succeeded over stdio MCP through Claude Code.
+Phase 4 polish (CHANGELOG, container image, integration tests) is planned —
 see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start

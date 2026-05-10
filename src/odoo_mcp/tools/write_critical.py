@@ -310,3 +310,180 @@ def odoo_register_payment(
             "amount": float(amount),
             "payment_ids": payment_ids,
         }
+
+
+def _reversal_field_names(client: Any) -> set[str]:
+    """Discover which fields the local Odoo's account.move.reversal model
+    accepts. Lets us stay version-agnostic (the wizard's schema has
+    drifted between Odoo 16/17/18/19)."""
+    fields = client.execute_kw("account.move.reversal", "fields_get", [], {})
+    return set(fields.keys())
+
+
+@mcp.tool()
+def odoo_reverse_move(
+    instance: Instance,
+    move_id: int,
+    reason: str,
+    journal_code: str | None = None,
+    date: str | None = None,
+    confirm: bool = False,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Reverse a posted account.move via Odoo's `account.move.reversal` wizard.
+
+    Creates a new posted move with the original lines flipped (debit↔credit)
+    and links it back via `reversed_entry_id`. The original move is left
+    untouched so the audit trail is preserved end-to-end (BFL 5 kap 5 §
+    in Sweden — corrections must be visible alongside the originals,
+    never overwrite them).
+
+    Use cases:
+    - Undo a smoke-test or accidental post
+    - Issue a credit memo against a vendor bill
+    - Reverse a period-end journal entry that turned out wrong
+
+    Args:
+        instance: "prod" or "dev"
+        move_id: ID of the posted move to reverse
+        reason: short human description; included on the new move's ref
+        journal_code: journal short code for the reversal entry; defaults
+            to the same journal as the original move
+        date: YYYY-MM-DD; defaults to today (Odoo wizard default)
+        confirm: must be True to actually run; False returns a dry-run
+            preview describing what would happen
+        idempotency_key: optional; same semantics as the other write_critical
+            tools
+
+    Returns:
+        - confirm=False: `{preview: True, original_summary, journal_code, reason, date}`
+        - confirm=True: `{reversed: True, replayed: bool, original, reversal: [{move_id, name, state, amount_total}]}`
+
+    Raises:
+        ValidationError if the original move is not in `posted` state.
+    """
+    client = get_client(instance)
+
+    if confirm and idempotency_key:
+        prior = find_previous_success(
+            idempotency_key=idempotency_key,
+            instance=instance,
+            tool="odoo_reverse_move",
+        )
+        if prior:
+            return {
+                "reversed": True,
+                "replayed": True,
+                "previous_summary": prior["response_summary"],
+            }
+
+    original = _summarize_move(client, int(move_id))
+    if original["state"] != "posted":
+        raise ValidationError(
+            f"Move {move_id} is in state '{original['state']}'; only "
+            f"posted moves can be reversed."
+        )
+
+    # Resolve target journal — default to the original's journal
+    if journal_code:
+        journals = client.execute_kw(
+            "account.journal", "search_read",
+            [[("code", "=", journal_code)]],
+            {"fields": ["id", "code"], "limit": 1},
+        )
+        if not journals:
+            raise ValidationError(
+                f"No journal with code '{journal_code}' on {instance}"
+            )
+        journal_id = int(journals[0]["id"])
+    else:
+        # Read original's journal_id
+        moves = client.execute_kw(
+            "account.move", "read", [int(move_id)],
+            {"fields": ["journal_id"]},
+        )
+        journal_id = int(moves[0]["journal_id"][0]) if moves and moves[0].get("journal_id") else None
+        if journal_id is None:
+            raise ValidationError(f"Move {move_id} has no journal_id")
+
+    if not confirm:
+        return {
+            "preview": True,
+            "validators_passed": True,
+            "original": original,
+            "journal_id": journal_id,
+            "journal_code": journal_code,
+            "date": date,
+            "reason": reason,
+            "next_step": (
+                "Call again with confirm=True to actually reverse this move. "
+                "A new posted move with flipped lines will be created. "
+                "Pass idempotency_key for replay safety."
+            ),
+        }
+
+    audit_params = {
+        "move_id": int(move_id),
+        "reason": reason,
+        "journal_code": journal_code,
+        "date": date,
+        "confirm": True,
+    }
+    with audit_call(
+        tool="odoo_reverse_move",
+        instance=instance,
+        params=audit_params,
+        idempotency_key=idempotency_key,
+    ) as ctx:
+        # Build wizard vals using only fields the local Odoo accepts —
+        # the wizard schema drifted between major versions.
+        available = _reversal_field_names(client)
+        vals: dict[str, Any] = {"reason": reason}
+        if "journal_id" in available:
+            vals["journal_id"] = journal_id
+        if "date" in available and date:
+            vals["date"] = date
+        if "move_ids" in available:
+            vals["move_ids"] = [(6, 0, [int(move_id)])]
+
+        wizard_id = client.execute_kw(
+            "account.move.reversal",
+            "create",
+            [vals],
+            {
+                "context": {
+                    "active_model": "account.move",
+                    "active_ids": [int(move_id)],
+                    "active_id": int(move_id),
+                }
+            },
+        )
+        client.execute_kw(
+            "account.move.reversal",
+            "refund_moves",
+            [[int(wizard_id)]],
+        )
+
+        # Read back the wizard to get the IDs of the newly-created reversals.
+        # The exact field name has been `new_move_ids` (Odoo 17+) historically.
+        wiz_data = client.execute_kw(
+            "account.move.reversal", "read", [int(wizard_id)],
+            {"fields": ["new_move_ids"]},
+        )
+        new_ids: list[int] = []
+        if wiz_data:
+            raw = wiz_data[0].get("new_move_ids") or []
+            new_ids = [int(x) for x in raw]
+
+        reversals = [_summarize_move(client, nid) for nid in new_ids]
+
+        ctx.summary = (
+            f"reversed move {move_id} ({original.get('name')}) → "
+            f"{[r.get('name') for r in reversals]}"
+        )
+        return {
+            "reversed": True,
+            "replayed": False,
+            "original": original,
+            "reversal": reversals,
+        }

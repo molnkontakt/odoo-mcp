@@ -153,3 +153,26 @@ reconciles it with the invoice.
 
 **Validates:** invoice in `posted` state, journal exists and is type
 `bank` or `cash`.
+
+### `odoo_reverse_move(instance, move_id, reason, journal_code=None, date=None, confirm=False, idempotency_key=None)`
+
+Reverse a posted `account.move` via Odoo's `account.move.reversal` wizard.
+Creates a new posted move with the original lines flipped (debit↔credit)
+and links it back via `reversed_entry_id`. The original is left untouched
+so the audit trail is preserved end-to-end.
+
+- `reason`: short description; appears on the new move's ref
+- `journal_code`: optional; defaults to the same journal as the original
+- `date`: YYYY-MM-DD; defaults to today (Odoo wizard default)
+
+- `confirm=False` → preview with original-move summary + journal info
+- `confirm=True` → returns `{reversed: True, original, reversal: [{move_id, name, ...}]}`
+
+**Validates:** original move is in `posted` state. Discovers the local
+Odoo's `account.move.reversal` field set at runtime so it works across
+Odoo 16/17/18/19 even when the wizard schema drifts.
+
+Use cases: undoing accidental posts, issuing credit memos against vendor
+bills, reversing a wrong period-end journal entry. In Sweden this is the
+correct way to honor BFL 5 kap 5 § (corrections must remain visible
+alongside the originals — never overwrite).
