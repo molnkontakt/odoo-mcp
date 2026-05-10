@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "LGPL-3.0-only"
 dependencies = [
-    "fastmcp>=0.2.0",
+    "fastmcp>=3.2.4",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.0",
 ]
