@@ -4,8 +4,9 @@ MCP server for Odoo. Gives Claude (or any other MCP client) controlled
 access to one or more Odoo instances via XML-RPC. Built for
 multi-environment setups (typically prod + dev).
 
-**Status:** Phase 1 (read-only) and Phase 2 (write_safe + audit log) are
-implemented. Phase 3 (write_critical: post / payments) is planned —
+**Status:** Phases 1–3 are implemented (read tools, write_safe + audit log,
+write_critical with confirm + idempotency). Phase 4 polish (CHANGELOG,
+container image, integration tests) is planned —
 see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
@@ -46,8 +47,9 @@ Three tiers:
 - **read**: free, no confirmation, not audit-logged
 - **write_safe**: creates drafts only, audit-logged when configured,
   validated against built-in and pluggable rules
-- **write_critical**: requires `confirm=True` and extended validation —
-  planned for Phase 3
+- **write_critical**: requires `confirm=True`. First call without `confirm`
+  returns a preview + validator outcome so the user can sanity-check
+  before authorizing. Optional `idempotency_key` for replay-safety.
 
 ## Validators
 

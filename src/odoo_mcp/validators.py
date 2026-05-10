@@ -48,10 +48,37 @@ class JournalEntryPayload:
     lines: list[JournalLinePayload]
 
 
+@dataclass
+class MovePostPayload:
+    """Payload for posting an existing draft account.move.
+
+    Used by post-time validators that need to inspect the move as it
+    currently exists in Odoo (account_code on each line, balance, etc.).
+    `move_id` is the only required input from the tool caller — the
+    validator fetches the rest via `client`.
+    """
+
+    instance: str
+    move_id: int
+
+
 class Validator(Protocol):
     name: str
 
     def __call__(self, payload: JournalEntryPayload, client: Any) -> None:
+        """Run the validator. Raise ValidationError on failure."""
+
+
+class PostValidator(Protocol):
+    """Validators that run before posting an existing draft move.
+
+    Distinct from `Validator` because they take a different payload shape
+    (a move_id to inspect, not a fresh entry to be created).
+    """
+
+    name: str
+
+    def __call__(self, payload: MovePostPayload, client: Any) -> None:
         """Run the validator. Raise ValidationError on failure."""
 
 
@@ -115,18 +142,83 @@ class TaxTagsExistValidator:
             )
 
 
+# ---- Post-time validators (run before promoting draft → posted) ----------
+
+
+class PostBalanceValidator:
+    """Re-check that the move balances right before posting.
+
+    Belt-and-braces: Odoo enforces balance on post anyway, but failing
+    here gives a clearer error than the SQL-level integrity violation.
+    """
+
+    name = "post_balance"
+
+    def __call__(self, payload: MovePostPayload, client: Any) -> None:
+        lines = client.execute_kw(
+            "account.move.line", "search_read",
+            [[("move_id", "=", payload.move_id)]],
+            {"fields": ["debit", "credit"]},
+        )
+        if not lines:
+            raise ValidationError(
+                f"Move {payload.move_id} has no lines on {payload.instance}"
+            )
+        debit = sum((Decimal(str(line["debit"])) for line in lines), Decimal(0))
+        credit = sum((Decimal(str(line["credit"])) for line in lines), Decimal(0))
+        if debit.quantize(Decimal("0.01")) != credit.quantize(Decimal("0.01")):
+            raise ValidationError(
+                f"Move {payload.move_id} is not balanced: "
+                f"debit={debit:.2f} != credit={credit:.2f}. "
+                f"Difference: {(debit - credit):.2f}"
+            )
+
+
+class PostStateValidator:
+    """Block posting a move that's not currently in `draft` state.
+
+    Avoids a confusing 'no-op' if the user accidentally double-posts or
+    runs the tool against a cancelled move.
+    """
+
+    name = "post_state"
+
+    def __call__(self, payload: MovePostPayload, client: Any) -> None:
+        moves = client.execute_kw(
+            "account.move", "read", [payload.move_id], {"fields": ["state"]},
+        )
+        if not moves:
+            raise ValidationError(
+                f"Move {payload.move_id} not found on {payload.instance}"
+            )
+        state = moves[0]["state"]
+        if state != "draft":
+            raise ValidationError(
+                f"Move {payload.move_id} is in state '{state}', cannot post. "
+                f"Only `draft` moves can be promoted."
+            )
+
+
 # ---- Registry -------------------------------------------------------------
 
 
 @dataclass
 class Registry:
     validators: list[Validator] = field(default_factory=list)
+    post_validators: list[PostValidator] = field(default_factory=list)
 
     def register(self, validator: Validator) -> None:
         self.validators.append(validator)
 
+    def register_post(self, validator: PostValidator) -> None:
+        self.post_validators.append(validator)
+
     def run(self, payload: JournalEntryPayload, client: Any) -> None:
         for v in self.validators:
+            v(payload, client)
+
+    def run_post(self, payload: MovePostPayload, client: Any) -> None:
+        for v in self.post_validators:
             v(payload, client)
 
 
@@ -140,6 +232,8 @@ def get_registry() -> Registry:
         _registry.register(BalanceValidator())
         _registry.register(AccountsExistValidator())
         _registry.register(TaxTagsExistValidator())
+        _registry.register_post(PostStateValidator())
+        _registry.register_post(PostBalanceValidator())
         _load_external(_registry)
     return _registry
 

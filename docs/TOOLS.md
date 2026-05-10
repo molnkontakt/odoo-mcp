@@ -114,9 +114,42 @@ the parent move is in draft state — Odoo locks tags on posted moves.
 
 **Returns:** `{line_id, applied_tags}`.
 
-## Write tools — critical (Phase 3, planned)
+## Write tools — critical (Phase 3, shipped)
 
-Not yet implemented. Will require `confirm=True` in payload + extended
-validation (period locks, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md#tool-catalog-planned).
+Tools that change posted state and can move money. They follow the same
+rules:
 
-Planned: `odoo_post_journal_entry`, `odoo_register_payment`.
+- **`confirm=True`** is required to actually do the work. Without it the
+  tool returns a preview/dry-run summary and runs the post-time validator
+  chain so the LLM (and the user reading the transcript) can sanity-check.
+- **`idempotency_key`** is optional but recommended in production. If
+  audit-log is enabled and a successful prior call exists with that key,
+  the tool returns the previous summary instead of re-acting. Lets you
+  safely retry transient transport errors.
+- The post-time validator chain runs **before** the actual write
+  (`PostStateValidator`, `PostBalanceValidator`, plus any plugins).
+
+### `odoo_post_journal_entry(instance, move_id, confirm=False, idempotency_key=None)`
+
+Promote a draft `account.move` to `posted` state.
+
+- `confirm=False` → returns `{preview: True, validators_passed: True, ...summary}`
+- `confirm=True` → returns `{posted: True, replayed: bool, ...summary}`
+
+**Validates:** move exists, currently in `draft` state, balanced.
+
+### `odoo_register_payment(instance, move_id, journal_code, amount, payment_date=None, confirm=False, idempotency_key=None)`
+
+Register a payment against a posted invoice via Odoo's
+`account.payment.register` wizard. Creates the payment row and
+reconciles it with the invoice.
+
+- `journal_code`: short code of the bank/cash journal (e.g. `"BNK1"`)
+- `amount`: payment amount in the invoice's currency
+- `payment_date`: YYYY-MM-DD; defaults to the invoice date
+
+- `confirm=False` → preview with the invoice summary + journal info
+- `confirm=True` → returns `{registered: True, payment_ids: [...], ...}`
+
+**Validates:** invoice in `posted` state, journal exists and is type
+`bank` or `cash`.

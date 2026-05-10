@@ -48,6 +48,14 @@ CREATE TABLE IF NOT EXISTS mcp_audit (
     error           TEXT,
     duration_ms     INTEGER
 );
+-- Migrate older deployments that pre-date the idempotency_key column.
+ALTER TABLE mcp_audit
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+-- Unique index scoped to (instance, tool, idempotency_key) so that a key
+-- reused across environments or tools doesn't incorrectly short-circuit.
+CREATE UNIQUE INDEX IF NOT EXISTS mcp_audit_idempotency_idx
+    ON mcp_audit (instance, tool, idempotency_key)
+    WHERE idempotency_key IS NOT NULL AND error IS NULL;
 """
 
 
@@ -99,6 +107,7 @@ class AuditLogger:
         error: str | None = None,
         duration_ms: int | None = None,
         session_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
         """Append a single audit row. Silently no-ops if logging disabled."""
         if not self._enabled:
@@ -115,8 +124,9 @@ class AuditLogger:
                         """
                         INSERT INTO mcp_audit
                             (session_id, instance, tool, params,
-                             response_summary, error, duration_ms)
-                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
+                             response_summary, error, duration_ms,
+                             idempotency_key)
+                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
                         """,
                         (
                             session_id,
@@ -126,10 +136,61 @@ class AuditLogger:
                             response_summary,
                             error,
                             duration_ms,
+                            idempotency_key,
                         ),
                     )
             except Exception:
                 logger.exception("Audit log insert failed; row dropped.")
+
+    def find_successful(
+        self,
+        *,
+        idempotency_key: str,
+        instance: str,
+        tool: str,
+    ) -> dict[str, Any] | None:
+        """Return a previously-successful audit row matching this idempotency
+        key on the given instance + tool, or None.
+
+        Scoping to (instance, tool, key) ensures that a key reused across
+        environments or tools cannot incorrectly short-circuit. Matches the
+        unique index on the table.
+        """
+        if not self._enabled or not idempotency_key:
+            return None
+        with self._lock:
+            if self._conn is None:
+                self._conn = self._connect()
+            if self._conn is None:
+                self._enabled = False
+                return None
+            try:
+                with self._conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, ts, tool, response_summary, params
+                        FROM mcp_audit
+                        WHERE idempotency_key = %s
+                          AND instance = %s
+                          AND tool = %s
+                          AND error IS NULL
+                        ORDER BY ts DESC LIMIT 1
+                        """,
+                        (idempotency_key, instance, tool),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    return {
+                        "id": row[0],
+                        "ts": row[1],
+                        "tool": row[2],
+                        "response_summary": row[3],
+                        "params": row[4],
+                    }
+            except Exception:
+                logger.exception("Audit log idempotency lookup failed")
+                return None
 
 
 _logger_instance: AuditLogger | None = None
@@ -149,6 +210,7 @@ def audit_call(
     instance: str | None,
     params: dict[str, Any] | None,
     session_id: str | None = None,
+    idempotency_key: str | None = None,
 ):
     """Context manager that times a tool call and writes an audit row.
 
@@ -161,6 +223,10 @@ def audit_call(
 
         with audit_call(tool="...", ...) as ctx:
             ctx.summary = f"created move id={move_id}"
+
+    Pass `idempotency_key` to enable replay-safety on write_critical tools:
+    use `find_previous_success(idempotency_key)` before doing the work, and
+    if that returns a row, return its summary instead of re-running.
     """
     class _Ctx:
         summary: str | None = None
@@ -184,6 +250,23 @@ def audit_call(
                 error=err,
                 duration_ms=duration,
                 session_id=session_id,
+                idempotency_key=idempotency_key,
             )
         except Exception:
             logger.exception("Failed to write audit record")
+
+
+def find_previous_success(
+    *, idempotency_key: str, instance: str, tool: str
+) -> dict[str, Any] | None:
+    """Look up a successful prior call with this idempotency key on the
+    given (instance, tool) pair.
+
+    Tools should call this before performing critical writes; if the
+    return value is non-None, return it as the result instead of doing
+    the work again. Scoping prevents a key reused across environments or
+    tools from causing an incorrect short-circuit.
+    """
+    return get_logger().find_successful(
+        idempotency_key=idempotency_key, instance=instance, tool=tool,
+    )

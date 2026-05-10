@@ -9,6 +9,9 @@ from odoo_mcp.validators import (
     BalanceValidator,
     JournalEntryPayload,
     JournalLinePayload,
+    MovePostPayload,
+    PostBalanceValidator,
+    PostStateValidator,
     Registry,
     TaxTagsExistValidator,
     ValidationError,
@@ -99,6 +102,52 @@ class TestTaxTagsExistValidator:
         ])
         with pytest.raises(ValidationError, match="se_99"):
             TaxTagsExistValidator()(payload, mock_client)
+
+
+class TestPostStateValidator:
+    def test_draft_passes(self, mock_client):
+        mock_client.state = {"account.move": {"read": [{"state": "draft"}]}}
+        PostStateValidator()(MovePostPayload(instance="dev", move_id=1), mock_client)
+
+    def test_posted_rejected(self, mock_client):
+        mock_client.state = {"account.move": {"read": [{"state": "posted"}]}}
+        with pytest.raises(ValidationError, match="state 'posted'"):
+            PostStateValidator()(MovePostPayload(instance="dev", move_id=1), mock_client)
+
+    def test_missing_move_rejected(self, mock_client):
+        mock_client.state = {"account.move": {"read": []}}
+        with pytest.raises(ValidationError, match="not found"):
+            PostStateValidator()(MovePostPayload(instance="dev", move_id=99), mock_client)
+
+
+class TestPostBalanceValidator:
+    def test_balanced_passes(self, mock_client):
+        mock_client.state = {
+            "account.move.line": {
+                "search_read": [
+                    {"debit": 100.0, "credit": 0.0},
+                    {"debit": 0.0, "credit": 100.0},
+                ]
+            }
+        }
+        PostBalanceValidator()(MovePostPayload(instance="dev", move_id=1), mock_client)
+
+    def test_unbalanced_rejected(self, mock_client):
+        mock_client.state = {
+            "account.move.line": {
+                "search_read": [
+                    {"debit": 100.0, "credit": 0.0},
+                    {"debit": 0.0, "credit": 99.0},
+                ]
+            }
+        }
+        with pytest.raises(ValidationError, match="not balanced"):
+            PostBalanceValidator()(MovePostPayload(instance="dev", move_id=1), mock_client)
+
+    def test_no_lines_rejected(self, mock_client):
+        mock_client.state = {"account.move.line": {"search_read": []}}
+        with pytest.raises(ValidationError, match="no lines"):
+            PostBalanceValidator()(MovePostPayload(instance="dev", move_id=1), mock_client)
 
 
 class TestRegistry:
