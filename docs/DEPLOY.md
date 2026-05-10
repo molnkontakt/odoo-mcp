@@ -25,6 +25,8 @@ ODOO_PROD_USER=user@example.com
 ODOO_PROD_PASSWORD=replace-me
 
 # Optional — audit-log destination (PostgreSQL)
+# Use placeholder values only. Never commit real credentials; inject via a
+# secret manager or environment at deploy/runtime.
 MCP_AUDIT_DB_URL=postgresql://user:pass@host:5432/dbname
 
 # Optional — pluggable validators (colon-separated module paths)
@@ -185,7 +187,7 @@ CREATE TABLE mcp_audit (
     idempotency_key TEXT
 );
 CREATE UNIQUE INDEX mcp_audit_idempotency_idx
-    ON mcp_audit (idempotency_key)
+    ON mcp_audit (instance, tool, idempotency_key)
     WHERE idempotency_key IS NOT NULL AND error IS NULL;
 ```
 
@@ -246,6 +248,6 @@ sudo systemctl restart odoo-mcp
 docker pull ghcr.io/molnkontakt/odoo-mcp:latest
 ```
 
-A `CHANGELOG.md` is planned for Phase 4 and is not yet available. Until
+A `CHANGELOG.md` will be available in Phase 4. Until
 then, review release notes/commit history before each upgrade —
 `write_critical` tool semantics may evolve.
