@@ -60,7 +60,7 @@ ODOO_DEV_DB=odoo
 ODOO_DEV_USER=mcp-bot@example.com
 ODOO_DEV_PASSWORD=...
 
-MCP_AUDIT_DB_URL=postgresql://mcp_audit:...@db.internal/mcp_audit
+MCP_AUDIT_DB_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME
 ```
 
 `/etc/systemd/system/odoo-mcp.service`:
