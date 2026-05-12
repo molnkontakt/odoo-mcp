@@ -12,7 +12,7 @@ license = "LGPL-3.0-only"
 dependencies = [
     "fastmcp>=3.2.4",
     "psycopg2-binary>=2.9.12",
-    "pydantic>=2.0",
+    "pydantic>=2.13.4",
 ]
 
 [project.optional-dependencies]
