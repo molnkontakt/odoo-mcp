@@ -71,6 +71,53 @@ balance, line_count}`, ordered by `account_code`. Accounts not found or
 without activity still appear in the result with zeros, so callers can
 rely on a stable result shape.
 
+## Read escape-hatches + metadata (Phase 1.5, shipped)
+
+Generic read-only tools so an agent can reach the long tail of Odoo without a
+bespoke tool per model. All read-tier — they never mutate state.
+
+### `odoo_search_read(instance, model, domain?, fields?, limit=80, offset=0, order?)`
+
+Generic `search_read` against any model. `domain` is a standard Odoo domain
+(list of `[field, op, value]` triples + `"|"`/`"&"`/`"!"` operators, implicit
+AND). Relational fields come back as `[id, display_name]` pairs (not resolved).
+
+```jsonc
+odoo_search_read("dev", "account.move",
+  domain=[["move_type","=","out_invoice"],["state","=","posted"]],
+  fields=["name","partner_id","amount_total"], limit=20, order="date desc")
+```
+
+### `odoo_read_group(instance, model, groupby, fields?, domain?, limit?, orderby?)`
+
+Server-side group + aggregate (Odoo `read_group`, `lazy=False`). Numeric
+`fields` are summed per group; each group also carries `__count`. Cheaper than
+pulling rows and summing client-side.
+
+```jsonc
+odoo_read_group("dev", "account.move.line",
+  groupby=["account_id"], fields=["balance"],
+  domain=[["parent_state","=","posted"],["date",">=","2026-01-01"]])
+```
+
+### `odoo_fields_get(instance, model, attributes?)`
+
+Introspect a model's fields (name → metadata). Default attributes:
+`string, type, help, required, readonly, relation, selection`. Use before
+`search_read`/write tools on an unfamiliar model.
+
+### Metadata readers
+
+Thin lookups for picking the right code/id when building entries/invoices:
+
+| Tool | Returns |
+|------|---------|
+| `odoo_list_journals(instance)` | journals: `id, code, name, type` |
+| `odoo_list_accounts(instance, query?, account_type?, limit=200)` | CoA: `id, code, name, account_type` |
+| `odoo_list_taxes(instance, type_tax_use?)` | taxes: `id, name, amount, amount_type, type_tax_use, price_include` |
+| `odoo_list_tax_tags(instance)` | tax-report tags: `id, name` (the `tax_tag_codes` values) |
+| `odoo_list_products(instance, query?, limit=50)` | products: `id, name, default_code, list_price, uom_id` |
+
 ## Write tools — safe (Phase 2, shipped)
 
 These tools never post or commit data the user can't easily reverse — they
@@ -113,6 +160,41 @@ the parent move is in draft state — Odoo locks tags on posted moves.
 - `replace`: if True, overwrite existing tags. Default False (additive).
 
 **Returns:** `{line_id, applied_tags}`.
+
+### `odoo_create_invoice(instance, move_type, partner_id, lines, invoice_date?, ref?, journal_code?)`
+
+Create a **draft** customer/vendor invoice or refund. Odoo computes the tax
+lines + totals from each line's taxes — the correct way to make a VAT-bearing
+document (vs a raw journal entry).
+
+- `move_type`: `out_invoice` | `in_invoice` | `out_refund` | `in_refund`
+- `lines`: `[{name, price_unit, quantity=1, account_code?, tax_names?, product_id?}]`
+- `tax_names` **must match the direction** (sale for `out_*`, purchase for `in_*`) —
+  a wrong-direction tax is rejected before creation so incorrect VAT can't reach
+  the momsrapport.
+
+**Returns:** `{move_id, name, state, move_type, amount_untaxed, amount_tax, amount_total, line_count}`.
+
+### `odoo_update_invoice(instance, move_id, values)`
+
+Update a whitelist of header fields on a **draft** move (`partner_id`,
+`invoice_date`, `invoice_date_due`, `ref`, `narration`, `payment_reference`).
+Rejected on posted moves and for any other field. **Returns:** `{move_id, updated}`.
+
+### `odoo_create_partner(instance, name, is_company=True, vat?, email?, phone?, street?, city?, zip_code?, country_code?, customer=False, supplier=False)`
+
+Create a `res.partner`. `country_code` (e.g. `"SE"`) is resolved to `country_id`;
+`customer`/`supplier` set the respective rank. **Returns:** `{partner_id, name}`.
+
+### `odoo_create_product(instance, name, list_price=0, default_code?, product_type="service", sale_ok=True, purchase_ok=False)`
+
+Create a `product.product` (`product_type`: `service` | `consu`).
+**Returns:** `{product_id, name}`.
+
+### `odoo_upload_attachment(instance, res_model, res_id, filename, data_base64, mimetype?)`
+
+Attach a base64-encoded file to any record (e.g. a supplier PDF onto a draft
+bill — feeds the OCR flow). **Returns:** `{attachment_id, name, res_model, res_id}`.
 
 ## Write tools — critical (Phase 3, shipped)
 

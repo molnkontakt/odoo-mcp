@@ -369,3 +369,229 @@ def odoo_query_account_aggregate(
             "line_count": int(bucket["count"]),
         })
     return sorted(results, key=lambda r: r["account_code"])
+
+
+# ---------------------------------------------------------------------------
+# Generic read escape-hatches (Phase 1)
+#
+# Let an agent reach any Odoo model read-only without a bespoke tool, covering
+# the long tail of "just look something up" without widening the write surface.
+# All read-tier: they never mutate state.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def odoo_search_read(
+    instance: Instance,
+    model: str,
+    domain: list[Any] | None = None,
+    fields: list[str] | None = None,
+    limit: int = 80,
+    offset: int = 0,
+    order: str | None = None,
+) -> list[dict[str, Any]]:
+    """Generic read-only search_read against any Odoo model.
+
+    The escape hatch for reads without a dedicated tool. Relational fields come
+    back as Odoo `[id, display_name]` pairs (not resolved).
+
+    Args:
+        instance: "prod" or "dev"
+        model: Odoo model name, e.g. "account.move", "res.partner", "product.product".
+        domain: Odoo domain — a list of triples and operators, e.g.
+            [["move_type", "=", "out_invoice"], ["state", "=", "posted"]]
+            (implicit AND). Omit or [] for all records.
+        fields: field names to return; omit for Odoo's default set (can be large).
+        limit: max rows (default 80; keep modest — this is a lookup, not an export).
+        offset: row offset for paging (default 0).
+        order: sort spec, e.g. "date desc, id desc".
+
+    Returns:
+        List of record dicts.
+    """
+    client = get_client(instance)
+    kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
+    if fields:
+        kwargs["fields"] = fields
+    if order:
+        kwargs["order"] = order
+    return client.execute_kw(model, "search_read", [domain or []], kwargs)
+
+
+@mcp.tool()
+def odoo_read_group(
+    instance: Instance,
+    model: str,
+    groupby: list[str],
+    fields: list[str] | None = None,
+    domain: list[Any] | None = None,
+    limit: int | None = None,
+    orderby: str | None = None,
+) -> list[dict[str, Any]]:
+    """Group + aggregate records (Odoo `read_group`) — server-side reporting.
+
+    Far cheaper than pulling every row and summing client-side. Numeric fields
+    are aggregated (summed) per group.
+
+    Args:
+        instance: "prod" or "dev"
+        model: Odoo model name, e.g. "account.move.line".
+        groupby: fields to group by, e.g. ["account_id"] or ["date:month"].
+        fields: measure fields to aggregate, e.g. ["balance", "debit", "credit"].
+            Omit to only get group keys + counts.
+        domain: optional Odoo domain to filter first.
+        limit: optional max groups.
+        orderby: optional sort, e.g. "account_id".
+
+    Returns:
+        List of group dicts. Each has the groupby key(s), the aggregated
+        measure(s), and `__count` (rows in the group).
+    """
+    client = get_client(instance)
+    kwargs: dict[str, Any] = {"lazy": False}
+    if limit is not None:
+        kwargs["limit"] = limit
+    if orderby:
+        kwargs["orderby"] = orderby
+    return client.execute_kw(
+        model, "read_group", [domain or [], fields or [], groupby], kwargs
+    )
+
+
+@mcp.tool()
+def odoo_fields_get(
+    instance: Instance,
+    model: str,
+    attributes: list[str] | None = None,
+) -> dict[str, Any]:
+    """Introspect a model's fields (name -> metadata).
+
+    Use this to discover what fields exist before calling `odoo_search_read`
+    or a write tool on an unfamiliar model.
+
+    Args:
+        instance: "prod" or "dev"
+        model: Odoo model name.
+        attributes: which field attributes to return; defaults to a compact set
+            (string, type, help, required, readonly, relation, selection).
+
+    Returns:
+        Dict mapping field name -> {attribute: value}.
+    """
+    client = get_client(instance)
+    attrs = attributes or [
+        "string", "type", "help", "required", "readonly", "relation", "selection",
+    ]
+    return client.execute_kw(model, "fields_get", [], {"attributes": attrs})
+
+
+# ---------------------------------------------------------------------------
+# Metadata readers (Phase 1)
+#
+# Thin, high-frequency lookups the agent needs to pick the right codes/ids when
+# building invoices, journal entries, payments, etc.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def odoo_list_journals(instance: Instance) -> list[dict[str, Any]]:
+    """List account journals (id, code, name, type).
+
+    Handy for picking a `journal_code` for entry/invoice/payment tools.
+    """
+    client = get_client(instance)
+    return client.execute_kw(
+        "account.journal", "search_read", [[]],
+        {"fields": ["id", "code", "name", "type"], "order": "type, code"},
+    )
+
+
+@mcp.tool()
+def odoo_list_accounts(
+    instance: Instance,
+    query: str | None = None,
+    account_type: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List/search the chart of accounts (id, code, name, account_type).
+
+    Args:
+        instance: "prod" or "dev"
+        query: optional substring match on code OR name.
+        account_type: optional Odoo account_type filter, e.g. "asset_cash",
+            "liability_payable", "income", "expense".
+        limit: max rows (default 200).
+    """
+    client = get_client(instance)
+    domain: list[Any] = []
+    if query:
+        domain = ["|", ("code", "ilike", query), ("name", "ilike", query)]
+    if account_type:
+        domain.append(("account_type", "=", account_type))
+    return client.execute_kw(
+        "account.account", "search_read", [domain],
+        {"fields": ["id", "code", "name", "account_type"],
+         "limit": limit, "order": "code"},
+    )
+
+
+@mcp.tool()
+def odoo_list_taxes(
+    instance: Instance,
+    type_tax_use: str | None = None,
+) -> list[dict[str, Any]]:
+    """List taxes (id, name, amount, amount_type, type_tax_use, price_include).
+
+    Args:
+        instance: "prod" or "dev"
+        type_tax_use: optional filter — "sale", "purchase", or "none".
+    """
+    client = get_client(instance)
+    domain: list[Any] = []
+    if type_tax_use:
+        domain.append(("type_tax_use", "=", type_tax_use))
+    return client.execute_kw(
+        "account.tax", "search_read", [domain],
+        {"fields": ["id", "name", "amount", "amount_type",
+                    "type_tax_use", "price_include"],
+         "order": "type_tax_use, sequence"},
+    )
+
+
+@mcp.tool()
+def odoo_list_tax_tags(instance: Instance) -> list[dict[str, Any]]:
+    """List tax-report tags (id, name).
+
+    These are the `tax_tag_codes` accepted by the journal-entry / invoice tools
+    (e.g. Swedish `se_30`, `se_48`).
+    """
+    client = get_client(instance)
+    return client.execute_kw(
+        "account.account.tag", "search_read",
+        [[("applicability", "=", "taxes")]],
+        {"fields": ["id", "name"], "order": "name"},
+    )
+
+
+@mcp.tool()
+def odoo_list_products(
+    instance: Instance,
+    query: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List/search products (id, name, default_code, list_price, uom).
+
+    Args:
+        instance: "prod" or "dev"
+        query: optional substring on name OR internal reference (default_code).
+        limit: max rows (default 50).
+    """
+    client = get_client(instance)
+    domain: list[Any] = []
+    if query:
+        domain = ["|", ("name", "ilike", query), ("default_code", "ilike", query)]
+    return client.execute_kw(
+        "product.product", "search_read", [domain],
+        {"fields": ["id", "name", "default_code", "list_price", "uom_id"],
+         "limit": limit, "order": "name"},
+    )

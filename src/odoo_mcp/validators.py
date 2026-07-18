@@ -62,6 +62,27 @@ class MovePostPayload:
     move_id: int
 
 
+@dataclass
+class InvoiceLinePayload:
+    name: str
+    price_unit: float
+    quantity: float = 1.0
+    account_code: str | None = None
+    tax_names: list[str] = field(default_factory=list)
+    product_id: int | None = None
+
+
+@dataclass
+class InvoicePayload:
+    instance: str
+    move_type: str
+    partner_id: int
+    lines: list[InvoiceLinePayload]
+    invoice_date: str | None = None
+    ref: str | None = None
+    journal_code: str | None = None
+
+
 class Validator(Protocol):
     name: str
 
@@ -199,6 +220,47 @@ class PostStateValidator:
             )
 
 
+# ---- Invoice validators (run before creating a draft invoice) ------------
+
+_SALE_MOVE_TYPES = {"out_invoice", "out_refund"}
+_PURCHASE_MOVE_TYPES = {"in_invoice", "in_refund"}
+
+
+class InvoiceValidator(Protocol):
+    name: str
+
+    def __call__(self, payload: InvoicePayload, client: Any) -> None:
+        """Run the validator. Raise ValidationError on failure."""
+
+
+class InvoiceStructureValidator:
+    """Structural sanity for a draft invoice before it reaches Odoo.
+
+    Tax *direction* (sale vs purchase) correctness is enforced where the tax
+    ids are actually resolved (`write_safe._resolve_invoice_tax_ids`), so a
+    wrong-direction tax can never silently produce incorrect VAT that would
+    flow into the momsrapport.
+    """
+
+    name = "invoice_structure"
+
+    def __call__(self, payload: InvoicePayload, client: Any) -> None:
+        if payload.move_type not in _SALE_MOVE_TYPES | _PURCHASE_MOVE_TYPES:
+            raise ValidationError(
+                f"Unsupported move_type '{payload.move_type}'. Use one of: "
+                "out_invoice, in_invoice, out_refund, in_refund."
+            )
+        if not payload.lines:
+            raise ValidationError("Invoice must have at least one line.")
+        for i, line in enumerate(payload.lines):
+            if not line.name:
+                raise ValidationError(f"Invoice line {i}: name (description) is required.")
+            if line.quantity == 0:
+                raise ValidationError(
+                    f"Invoice line {i} ({line.name}): quantity must be non-zero."
+                )
+
+
 # ---- Registry -------------------------------------------------------------
 
 
@@ -206,6 +268,7 @@ class PostStateValidator:
 class Registry:
     validators: list[Validator] = field(default_factory=list)
     post_validators: list[PostValidator] = field(default_factory=list)
+    invoice_validators: list[InvoiceValidator] = field(default_factory=list)
 
     def register(self, validator: Validator) -> None:
         self.validators.append(validator)
@@ -213,12 +276,19 @@ class Registry:
     def register_post(self, validator: PostValidator) -> None:
         self.post_validators.append(validator)
 
+    def register_invoice(self, validator: InvoiceValidator) -> None:
+        self.invoice_validators.append(validator)
+
     def run(self, payload: JournalEntryPayload, client: Any) -> None:
         for v in self.validators:
             v(payload, client)
 
     def run_post(self, payload: MovePostPayload, client: Any) -> None:
         for v in self.post_validators:
+            v(payload, client)
+
+    def run_invoice(self, payload: InvoicePayload, client: Any) -> None:
+        for v in self.invoice_validators:
             v(payload, client)
 
 
@@ -234,6 +304,7 @@ def get_registry() -> Registry:
         _registry.register(TaxTagsExistValidator())
         _registry.register_post(PostStateValidator())
         _registry.register_post(PostBalanceValidator())
+        _registry.register_invoice(InvoiceStructureValidator())
         _load_external(_registry)
     return _registry
 
