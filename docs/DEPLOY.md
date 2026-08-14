@@ -31,15 +31,18 @@ MCP_AUDIT_DB_URL=postgresql://user:pass@host:5432/dbname
 # MCP_VALIDATORS_PATH=my_validators.swedish_vat:my_validators.period_lock
 EOF
 
-# direnv / dotenv-cli / `set -a; source .env; set +a` — pick your poison
-set -a; source .env; set +a
+# Do NOT `source` this file. The shell *executes* it, so a password containing
+# $, `, ; or # is expanded, run as a command, or truncated instead of being
+# passed through verbatim — and the failure is silent until authentication
+# breaks. Export the variables directly, or use something that parses rather
+# than evaluates: systemd's EnvironmentFile (below) and dotenv-cli both qualify.
 odoo-mcp
 ```
 
 Wire into Claude Code:
 
 ```bash
-claude mcp add odoo --transport stdio --command odoo-mcp
+claude mcp add odoo -- odoo-mcp
 ```
 
 ## 2. Systemd (always-on, single host)
