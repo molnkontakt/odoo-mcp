@@ -36,7 +36,7 @@ odoo-mcp
 ## Wire it into Claude Code
 
 ```bash
-claude mcp add odoo --transport stdio --command odoo-mcp
+claude mcp add odoo -- odoo-mcp
 ```
 
 Or expose it over HTTP via a gateway/proxy in production.
