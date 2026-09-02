@@ -434,3 +434,29 @@ class TestAuditCarriesCallerIdentity:
         row = claims_seen[0]
         assert row["actor"] == "local:stdio"
         assert row["actor_sub"] is None
+
+
+class TestDiscoveryUserAgent:
+    """Cloudflare's managed rules 403 urllib's default User-Agent."""
+
+    def test_discovery_sends_an_explicit_user_agent(self, monkeypatch):
+        seen: dict[str, Any] = {}
+
+        class FakeResponse:
+            def read(self):
+                return b'{"jwks_uri": "https://idp/jwks"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            seen["ua"] = request.get_header("User-agent")
+            return FakeResponse()
+
+        monkeypatch.setattr(auth.urllib.request, "urlopen", fake_urlopen)
+        auth.discover_oidc("https://auth.example.com/application/o/x/")
+        assert seen["ua"] == auth.USER_AGENT
+        assert "python-urllib" not in seen["ua"].lower()

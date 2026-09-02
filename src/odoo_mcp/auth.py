@@ -65,6 +65,9 @@ SCOPE_PROD = "odoo:prod"
 
 ALL_SCOPES: tuple[str, ...] = (SCOPE_READ, SCOPE_WRITE, SCOPE_CRITICAL, SCOPE_PROD)
 
+#: Sent on the discovery request. See `discover_oidc`.
+USER_AGENT = "odoo-mcp/0.1 (+https://github.com/molnkontakt/odoo-mcp)"
+
 #: Tier scopes imply the tiers below them: a caller allowed to post a journal
 #: entry can obviously read it. `odoo:prod` is deliberately outside this chain —
 #: it is an orthogonal axis (which ledger), not a stronger tier.
@@ -227,8 +230,14 @@ def discover_oidc(issuer: str, *, timeout: float = 10.0) -> dict[str, Any]:
     upstream endpoints there is nothing to proxy to.
     """
     url = issuer.rstrip("/") + "/.well-known/openid-configuration"
+    # An explicit User-Agent, because urllib's default (`Python-urllib/3.x`) is
+    # blocked outright by Cloudflare's managed bot rules — a 403 that reads
+    # like a dead endpoint or a firewall problem. Verified against
+    # auth.molnkontakt.se 2026-09-02: urllib's default 403s, everything else
+    # (including httpx's default, which fastmcp uses for JWKS) gets 200.
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
             return dict(json.loads(resp.read().decode()))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise AuthConfigError(
