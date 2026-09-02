@@ -39,7 +39,24 @@ odoo-mcp
 claude mcp add odoo --transport stdio --command odoo-mcp
 ```
 
-Or expose it over HTTP via a gateway/proxy in production.
+## Remote clients (claude.ai, Claude Desktop)
+
+Set `MCP_TRANSPORT=http` to serve Streamable HTTP instead of stdio, and point
+clients at `https://<host>/mcp`. That transport requires OAuth — token
+verification against your IdP's JWKS, RFC 9728 protected-resource metadata so
+web clients can discover the login, and per-tier scopes (`odoo:read`,
+`odoo:write`, `odoo:critical`, plus `odoo:prod` to touch the production
+ledger). The server refuses to serve HTTP anonymously.
+
+Use `MCP_AUTH_MODE=oauth-proxy` for Claude clients: they self-register through
+Dynamic Client Registration, which most IdPs (Authentik among them) do not
+offer, so the server fronts the IdP with a DCR endpoint and runs the real flow
+upstream with its own credentials. `MCP_AUTH_MODE=oauth` is the plain
+resource-server mode for callers that already hold a token.
+
+The caller's identity from the token is what lands in the audit log; the Odoo
+hop still uses one service account, since Odoo does not accept OIDC tokens over
+XML-RPC. See [docs/DEPLOY.md](docs/DEPLOY.md#4-remote-streamable-http--oauth).
 
 ## Tools
 

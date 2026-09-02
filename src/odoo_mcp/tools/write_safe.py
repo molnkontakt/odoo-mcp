@@ -11,6 +11,7 @@ from typing import Any
 
 from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
+from odoo_mcp.auth import SCOPE_WRITE, requires_scope
 from odoo_mcp.client import get_client
 from odoo_mcp.instances import Instance
 from odoo_mcp.validators import (
@@ -106,6 +107,7 @@ def _resolve_invoice_tax_ids(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_create_journal_entry_draft(
     instance: Instance,
     date: str,
@@ -227,6 +229,7 @@ def odoo_create_journal_entry_draft(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_add_tax_tags(
     instance: Instance,
     line_id: int,
@@ -283,6 +286,7 @@ def odoo_add_tax_tags(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_set_partner(
     instance: Instance,
     move_id: int,
@@ -333,6 +337,7 @@ def odoo_set_partner(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_create_invoice(
     instance: Instance,
     move_type: str,
@@ -481,6 +486,7 @@ _INVOICE_UPDATABLE_FIELDS = {
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_update_invoice(
     instance: Instance,
     move_id: int,
@@ -533,6 +539,7 @@ def odoo_update_invoice(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_create_partner(
     instance: Instance,
     name: str,
@@ -595,6 +602,7 @@ def odoo_create_partner(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_create_product(
     instance: Instance,
     name: str,
@@ -638,6 +646,7 @@ def odoo_create_product(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_WRITE)
 def odoo_upload_attachment(
     instance: Instance,
     res_model: str,

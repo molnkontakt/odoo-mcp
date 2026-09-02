@@ -51,3 +51,11 @@ class MockClient:
 @pytest.fixture
 def mock_client() -> MockClient:
     return MockClient()
+
+
+@pytest.fixture(scope="module")
+def module_monkeypatch():
+    """`monkeypatch` is function-scoped; module-scoped servers need this."""
+    mp = pytest.MonkeyPatch()
+    yield mp
+    mp.undo()

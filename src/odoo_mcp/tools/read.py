@@ -2,7 +2,9 @@
 
 from typing import Any
 
+from odoo_mcp.access import DENIED_FIELDS, check_fields, check_model, scrub_rows
 from odoo_mcp.app import mcp
+from odoo_mcp.auth import SCOPE_READ, requires_scope
 from odoo_mcp.client import get_client
 from odoo_mcp.instances import Instance
 
@@ -35,6 +37,7 @@ def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> N
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_partners(
     instance: Instance,
     query: str,
@@ -62,6 +65,7 @@ def odoo_search_partners(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_partner(instance: Instance, partner_id: int) -> dict[str, Any]:
     """Get full info for a single res.partner.
 
@@ -87,6 +91,7 @@ def odoo_get_partner(instance: Instance, partner_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_invoices(
     instance: Instance,
     date_from: str,
@@ -124,6 +129,7 @@ def odoo_search_invoices(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_journal_entries(
     instance: Instance,
     date_from: str | None = None,
@@ -167,6 +173,7 @@ def odoo_search_journal_entries(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
     """Get full account.move with all journal lines.
 
@@ -223,6 +230,7 @@ def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_account_balance(
     instance: Instance,
     account_code: str,
@@ -278,6 +286,7 @@ def odoo_get_account_balance(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_query_account_aggregate(
     instance: Instance,
     account_codes: list[str],
@@ -381,6 +390,7 @@ def odoo_query_account_aggregate(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_read(
     instance: Instance,
     model: str,
@@ -408,17 +418,27 @@ def odoo_search_read(
 
     Returns:
         List of record dicts.
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain, or if a
+        denied field is requested. See `odoo_mcp.access`.
     """
+    check_model(model)
+    check_fields(fields)
     client = get_client(instance)
     kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
     if fields:
         kwargs["fields"] = fields
     if order:
         kwargs["order"] = order
-    return client.execute_kw(model, "search_read", [domain or []], kwargs)
+    rows = client.execute_kw(model, "search_read", [domain or []], kwargs)
+    # Scrub unconditionally: with no `fields` Odoo returns its default set,
+    # which on ir.attachment carries the payload and access_token.
+    return scrub_rows(rows)
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_read_group(
     instance: Instance,
     model: str,
@@ -446,19 +466,28 @@ def odoo_read_group(
     Returns:
         List of group dicts. Each has the groupby key(s), the aggregated
         measure(s), and `__count` (rows in the group).
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain, or if a
+        denied field is used as a measure or groupby key.
     """
+    check_model(model)
+    check_fields(fields)
+    check_fields(groupby)
     client = get_client(instance)
     kwargs: dict[str, Any] = {"lazy": False}
     if limit is not None:
         kwargs["limit"] = limit
     if orderby:
         kwargs["orderby"] = orderby
-    return client.execute_kw(
+    rows = client.execute_kw(
         model, "read_group", [domain or [], fields or [], groupby], kwargs
     )
+    return scrub_rows(rows)
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_fields_get(
     instance: Instance,
     model: str,
@@ -476,13 +505,21 @@ def odoo_fields_get(
             (string, type, help, required, readonly, relation, selection).
 
     Returns:
-        Dict mapping field name -> {attribute: value}.
+        Dict mapping field name -> {attribute: value}. Denied fields are
+        omitted, so introspection cannot be used to route around the policy.
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain.
     """
+    check_model(model)
     client = get_client(instance)
     attrs = attributes or [
         "string", "type", "help", "required", "readonly", "relation", "selection",
     ]
-    return client.execute_kw(model, "fields_get", [], {"attributes": attrs})
+    result = client.execute_kw(model, "fields_get", [], {"attributes": attrs})
+    if isinstance(result, dict):
+        return {k: v for k, v in result.items() if k not in DENIED_FIELDS}
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +531,7 @@ def odoo_fields_get(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_list_journals(instance: Instance) -> list[dict[str, Any]]:
     """List account journals (id, code, name, type).
 
@@ -507,6 +545,7 @@ def odoo_list_journals(instance: Instance) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_list_accounts(
     instance: Instance,
     query: str | None = None,
@@ -536,6 +575,7 @@ def odoo_list_accounts(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_list_taxes(
     instance: Instance,
     type_tax_use: str | None = None,
@@ -559,6 +599,7 @@ def odoo_list_taxes(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_list_tax_tags(instance: Instance) -> list[dict[str, Any]]:
     """List tax-report tags (id, name).
 
@@ -574,6 +615,7 @@ def odoo_list_tax_tags(instance: Instance) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_list_products(
     instance: Instance,
     query: str | None = None,

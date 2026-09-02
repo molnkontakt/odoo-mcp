@@ -21,7 +21,8 @@ from __future__ import annotations
 from typing import Any
 
 from odoo_mcp.app import mcp
-from odoo_mcp.audit import audit_call, find_previous_success
+from odoo_mcp.audit import audit_call, find_previous_success, fingerprint_params
+from odoo_mcp.auth import SCOPE_CRITICAL, requires_scope
 from odoo_mcp.client import get_client
 from odoo_mcp.instances import Instance
 from odoo_mcp.validators import (
@@ -29,6 +30,66 @@ from odoo_mcp.validators import (
     ValidationError,
     get_registry,
 )
+
+
+def _check_replay(
+    *,
+    tool: str,
+    instance: str,
+    idempotency_key: str,
+    params: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Look up a prior call for this key and validate it was the same request.
+
+    The key alone is not enough. Without comparing the parameters, reusing a
+    key against a different move returns a confident `{"replayed": true}` for
+    work that was never performed on that move.
+    """
+    prior = find_previous_success(
+        idempotency_key=idempotency_key, instance=instance, tool=tool
+    )
+    if not prior:
+        return None
+
+    now_fp = fingerprint_params(params)
+    prior_fp = prior.get("params_fingerprint")
+    if prior_fp and prior_fp != now_fp:
+        raise ValidationError(
+            f"idempotency_key '{idempotency_key}' was already used on "
+            f"{instance}/{tool} with different parameters (recorded "
+            f"{prior['ts']}). Refusing to report this call as a replay of a "
+            f"different request — use a fresh key."
+        )
+
+    status = prior.get("status")
+    if status == "in_progress":
+        raise ValidationError(
+            f"idempotency_key '{idempotency_key}' has an unfinished call from "
+            f"{prior['ts']} (audit row {prior['id']} is still in_progress). "
+            f"The earlier attempt may have been applied in Odoo. Verify there "
+            f"before retrying; do not reuse this key."
+        )
+    if status == "unknown":
+        raise ValidationError(
+            f"idempotency_key '{idempotency_key}' belongs to a call whose "
+            f"outcome is unknown (audit row {prior['id']}, {prior['ts']}) — "
+            f"the request may have reached Odoo. Verify in Odoo before "
+            f"retrying; do not reuse this key."
+        )
+    return prior
+
+
+def _replay_response(prior: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """Build the short-circuit response for an already-performed call."""
+    ts = prior.get("ts")
+    return {
+        "replayed": True,
+        "previous_call_at": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+        "previous_summary": prior.get("response_summary"),
+        "previous_status": prior.get("status"),
+        "audit_row_id": prior.get("id"),
+        **extra,
+    }
 
 
 def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
@@ -56,6 +117,7 @@ def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_CRITICAL)
 def odoo_post_journal_entry(
     instance: Instance,
     move_id: int,
@@ -93,29 +155,34 @@ def odoo_post_journal_entry(
     """
     client = get_client(instance)
 
-    # Idempotency short-circuit (only meaningful for confirm=True).
-    # Scoped to (instance, tool, key) so a key reused across
-    # environments/tools cannot replay the wrong outcome.
+    # Idempotency short-circuit (only meaningful for confirm=True). Scoped to
+    # (instance, tool, key), and the caller's arguments must match — see
+    # _check_replay. Deliberately before any Odoo call: a replay must not
+    # depend on the move still being readable.
+    request_params = {"move_id": int(move_id), "confirm": True}
     if confirm and idempotency_key:
-        prior = find_previous_success(
-            idempotency_key=idempotency_key,
-            instance=instance,
+        prior = _check_replay(
             tool="odoo_post_journal_entry",
+            instance=instance,
+            idempotency_key=idempotency_key,
+            params=request_params,
         )
         if prior:
-            return {
-                "posted": True,
-                "replayed": True,
-                "previous_call_at": prior["ts"].isoformat()
-                    if hasattr(prior["ts"], "isoformat") else str(prior["ts"]),
-                "previous_summary": prior["response_summary"],
-            }
+            return _replay_response(prior, posted=True, move_id=int(move_id))
 
     # Always run post-time validators — they describe the same state on
     # both the dry-run and the real run, so users see the same go/no-go
     # signal in their preview.
     payload = MovePostPayload(instance=instance, move_id=int(move_id))
     summary = _summarize_move(client, int(move_id))
+
+    audit_params = {
+        "move_id": int(move_id),
+        "name": summary.get("name"),
+        "ref": summary.get("ref"),
+        "amount_total": summary.get("amount_total"),
+        "confirm": True,
+    }
 
     if not confirm:
         # Dry-run: surface validator results without raising on success
@@ -132,23 +199,21 @@ def odoo_post_journal_entry(
         }
 
     # Real post path
-    audit_params = {
-        "move_id": int(move_id),
-        "name": summary.get("name"),
-        "ref": summary.get("ref"),
-        "amount_total": summary.get("amount_total"),
-        "confirm": True,
-    }
     with audit_call(
         tool="odoo_post_journal_entry",
         instance=instance,
         params=audit_params,
         idempotency_key=idempotency_key,
+        params_fingerprint=fingerprint_params(request_params),
+        critical=True,
     ) as ctx:
         get_registry().run_post(payload, client)
         client.execute_kw(
             "account.move", "action_post", [[int(move_id)]],
         )
+        # The move is posted from here on. Mark it before anything else can
+        # fail, so a later error cannot be mistaken for "nothing happened".
+        ctx.mark_committed()
         # Re-read so the response reflects the new state/name
         final = _summarize_move(client, int(move_id))
         ctx.summary = (
@@ -163,6 +228,7 @@ def odoo_post_journal_entry(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_CRITICAL)
 def odoo_register_payment(
     instance: Instance,
     move_id: int,
@@ -192,18 +258,25 @@ def odoo_register_payment(
     """
     client = get_client(instance)
 
+    # Replay check before any Odoo call — the fingerprint covers the caller's
+    # raw arguments, so `payment_date=None` stays distinct from an explicit
+    # date even though both resolve to the same effective date below.
+    request_params = {
+        "move_id": int(move_id),
+        "journal_code": journal_code,
+        "amount": float(amount),
+        "payment_date": payment_date,
+        "confirm": True,
+    }
     if confirm and idempotency_key:
-        prior = find_previous_success(
-            idempotency_key=idempotency_key,
-            instance=instance,
+        prior = _check_replay(
             tool="odoo_register_payment",
+            instance=instance,
+            idempotency_key=idempotency_key,
+            params=request_params,
         )
         if prior:
-            return {
-                "registered": True,
-                "replayed": True,
-                "previous_summary": prior["response_summary"],
-            }
+            return _replay_response(prior, registered=True, move_id=int(move_id))
 
     invoice = _summarize_move(client, int(move_id))
     if invoice["state"] != "posted":
@@ -223,16 +296,27 @@ def odoo_register_payment(
         )
     journal = journals[0]
 
+    # Resolve the accounting date ONCE, so the preview cannot promise one date
+    # while the write books another. Odoo's account.payment.register defaults
+    # payment_date to context_today, which is *not* the invoice date — leaving
+    # this to the wizard made confirm=False and confirm=True disagree on the
+    # field that decides period and fiscal year.
+    effective_payment_date = payment_date or invoice.get("date")
+
     if not confirm:
         return {
             "preview": True,
-            "validators_passed": True,
+            # NOTE: no `validators_passed` key here on purpose. No validator
+            # runs for payments, and reporting True would borrow the meaning
+            # the key legitimately carries in odoo_post_journal_entry, where
+            # it follows an actual run_post(). Absence is honest; a hardcoded
+            # True is not.
             **invoice,
             "journal_id": int(journal["id"]),
             "journal_code": journal["code"],
             "journal_type": journal["type"],
             "amount": float(amount),
-            "payment_date": payment_date or invoice.get("date"),
+            "payment_date": effective_payment_date,
             "next_step": (
                 "Call again with confirm=True to create and reconcile the "
                 "payment. Pass idempotency_key for replay safety."
@@ -243,22 +327,25 @@ def odoo_register_payment(
         "move_id": int(move_id),
         "journal_code": journal_code,
         "amount": float(amount),
-        "payment_date": payment_date,
+        "payment_date": effective_payment_date,
         "confirm": True,
     }
+
     with audit_call(
         tool="odoo_register_payment",
         instance=instance,
         params=audit_params,
         idempotency_key=idempotency_key,
+        params_fingerprint=fingerprint_params(request_params),
+        critical=True,
     ) as ctx:
         wizard_vals: dict[str, Any] = {
             "journal_id": int(journal["id"]),
             "amount": float(amount),
             "group_payment": False,
         }
-        if payment_date:
-            wizard_vals["payment_date"] = payment_date
+        if effective_payment_date:
+            wizard_vals["payment_date"] = effective_payment_date
 
         wizard_id = client.execute_kw(
             "account.payment.register",
@@ -277,6 +364,9 @@ def odoo_register_payment(
             "action_create_payments",
             [[int(wizard_id)]],
         )
+        # Money has moved. Everything below is parsing, and parsing failures
+        # must not make this look replayable.
+        ctx.mark_committed()
 
         # `action_create_payments` typically returns an action dict that
         # references the newly created account.payment record(s). Be
@@ -321,6 +411,7 @@ def _reversal_field_names(client: Any) -> set[str]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_CRITICAL)
 def odoo_reverse_move(
     instance: Instance,
     move_id: int,
@@ -329,14 +420,22 @@ def odoo_reverse_move(
     date: str | None = None,
     confirm: bool = False,
     idempotency_key: str | None = None,
+    allow_additional_reversal: bool = False,
 ) -> dict[str, Any]:
     """Reverse a posted account.move via Odoo's `account.move.reversal` wizard.
 
-    Creates a new posted move with the original lines flipped (debit↔credit)
-    and links it back via `reversed_entry_id`. The original move is left
-    untouched so the audit trail is preserved end-to-end (BFL 5 kap 5 §
-    in Sweden — corrections must be visible alongside the originals,
-    never overwrite them).
+    Creates a new move with the original lines flipped (debit↔credit) and links
+    it back via `reversed_entry_id`. The original move is left untouched so the
+    audit trail is preserved end-to-end (BFL 5 kap 5 § in Sweden — corrections
+    must be visible alongside the originals, never overwrite them).
+
+    IMPORTANT — the reversal is not always posted. Odoo's `refund_moves()` only
+    posts and reconciles the reversal when the move's `move_type` is `entry`
+    (a manual journal entry). For invoices, bills and refunds it creates the
+    credit note in DRAFT and leaves the original fully open. This tool reports
+    what actually happened: `reversed` is True only when every created reversal
+    is posted, and `reversal_state` carries the per-move states either way.
+    A draft reversal still needs `odoo_post_journal_entry` to take effect.
 
     Use cases:
     - Undo a smoke-test or accidental post
@@ -354,28 +453,38 @@ def odoo_reverse_move(
             preview describing what would happen
         idempotency_key: optional; same semantics as the other write_critical
             tools
+        allow_additional_reversal: reverse even though a reversal already
+            exists. Off by default — a second reversal nets the ledger back
+            out while leaving two spurious verifications behind.
 
     Returns:
-        - confirm=False: `{preview: True, original_summary, journal_code, reason, date}`
-        - confirm=True: `{reversed: True, replayed: bool, original, reversal: [{move_id, name, state, amount_total}]}`
+        - confirm=False: `{preview: True, original, journal_code, reason, date,
+          existing_reversals}`
+        - confirm=True: `{reversed: bool, reversal_state: [...], replayed: bool,
+          original, reversal: [{move_id, name, state, amount_total}]}`
 
     Raises:
-        ValidationError if the original move is not in `posted` state.
+        ValidationError if the original move is not in `posted` state, or if it
+        is already reversed and allow_additional_reversal is False.
     """
     client = get_client(instance)
 
+    request_params = {
+        "move_id": int(move_id),
+        "reason": reason,
+        "journal_code": journal_code,
+        "date": date,
+        "confirm": True,
+    }
     if confirm and idempotency_key:
-        prior = find_previous_success(
-            idempotency_key=idempotency_key,
-            instance=instance,
+        prior = _check_replay(
             tool="odoo_reverse_move",
+            instance=instance,
+            idempotency_key=idempotency_key,
+            params=request_params,
         )
         if prior:
-            return {
-                "reversed": True,
-                "replayed": True,
-                "previous_summary": prior["response_summary"],
-            }
+            return _replay_response(prior, reversed=True, move_id=int(move_id))
 
     original = _summarize_move(client, int(move_id))
     if original["state"] != "posted":
@@ -406,19 +515,41 @@ def odoo_reverse_move(
         if journal_id is None:
             raise ValidationError(f"Move {move_id} has no journal_id")
 
+    # Guard against reversing something that was already reversed. Without this
+    # a repeated call creates a second mirror-image entry of the same size, so
+    # the ledger nets out correctly while carrying two spurious verifications.
+    existing = client.execute_kw(
+        "account.move", "search_read",
+        [[("reversed_entry_id", "=", int(move_id))]],
+        {"fields": ["id", "name", "state"], "limit": 5},
+    )
+    if existing and not allow_additional_reversal:
+        names = [e.get("name") for e in existing]
+        raise ValidationError(
+            f"Move {move_id} ({original.get('name')}) is already reversed by "
+            f"{names}. Pass allow_additional_reversal=True if a further "
+            f"reversal is genuinely intended."
+        )
+
     if not confirm:
         return {
             "preview": True,
-            "validators_passed": True,
+            # See the note in odoo_register_payment: no validator runs for
+            # reversals, so no validators_passed key is reported.
             "original": original,
             "journal_id": journal_id,
             "journal_code": journal_code,
             "date": date,
             "reason": reason,
+            "existing_reversals": [
+                {"move_id": int(e["id"]), "name": e.get("name"), "state": e.get("state")}
+                for e in existing
+            ],
             "next_step": (
                 "Call again with confirm=True to actually reverse this move. "
-                "A new posted move with flipped lines will be created. "
-                "Pass idempotency_key for replay safety."
+                "Pass idempotency_key for replay safety. Note that for invoices "
+                "and bills Odoo creates the credit note in DRAFT — check the "
+                "`reversed` and `reversal_state` fields in the result."
             ),
         }
 
@@ -429,11 +560,14 @@ def odoo_reverse_move(
         "date": date,
         "confirm": True,
     }
+
     with audit_call(
         tool="odoo_reverse_move",
         instance=instance,
         params=audit_params,
         idempotency_key=idempotency_key,
+        params_fingerprint=fingerprint_params(request_params),
+        critical=True,
     ) as ctx:
         # Build wizard vals using only fields the local Odoo accepts —
         # the wizard schema drifted between major versions.
@@ -463,6 +597,8 @@ def odoo_reverse_move(
             "refund_moves",
             [[int(wizard_id)]],
         )
+        # The reversal exists in Odoo from here. Mark before reading it back.
+        ctx.mark_committed()
 
         # Read back the wizard to get the IDs of the newly-created reversals.
         # The exact field name has been `new_move_ids` (Odoo 17+) historically.
@@ -477,13 +613,41 @@ def odoo_reverse_move(
 
         reversals = [_summarize_move(client, nid) for nid in new_ids]
 
+        # Report what Odoo actually did. refund_moves() only posts+reconciles
+        # when move_type == 'entry'; for invoices and bills the credit note is
+        # left in draft and the original stays open. Claiming reversed=True
+        # there tells the caller a correction landed when nothing did.
+        reversal_state = [
+            {"move_id": r["move_id"], "name": r.get("name"), "state": r.get("state")}
+            for r in reversals
+        ]
+        fully_posted = bool(reversals) and all(
+            r.get("state") == "posted" for r in reversals
+        )
+        drafts = [r["move_id"] for r in reversals if r.get("state") == "draft"]
+
         ctx.summary = (
             f"reversed move {move_id} ({original.get('name')}) → "
-            f"{[r.get('name') for r in reversals]}"
+            f"{[r.get('name') for r in reversals]} "
+            f"(posted={fully_posted}, drafts={drafts})"
         )
-        return {
-            "reversed": True,
+        result_payload: dict[str, Any] = {
+            "reversed": fully_posted,
+            "reversal_state": reversal_state,
             "replayed": False,
             "original": original,
             "reversal": reversals,
         }
+        if drafts:
+            result_payload["next_step"] = (
+                f"Reversal(s) {drafts} were created in DRAFT — Odoo only "
+                f"auto-posts reversals of manual journal entries. The original "
+                f"move is still open. Post them with odoo_post_journal_entry "
+                f"to make the correction take effect."
+            )
+        if not reversals:
+            result_payload["next_step"] = (
+                "The wizard reported no new moves. Verify in Odoo before "
+                "retrying — do not assume nothing happened."
+            )
+        return result_payload

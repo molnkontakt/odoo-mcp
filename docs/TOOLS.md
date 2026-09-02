@@ -8,6 +8,18 @@ All tools take `instance: "prod" | "dev"` as the first parameter. The
 server resolves the URL/credentials from environment variables prefixed
 with the instance name in uppercase (e.g. `ODOO_PROD_URL`).
 
+## Required scopes
+
+Only enforced on the HTTP transport with `MCP_AUTH_MODE=oauth`; stdio callers
+are trusted by the local process boundary.
+
+| Tier | Scope | Implies |
+|---|---|---|
+| Read tools | `odoo:read` | — |
+| Write — safe | `odoo:write` | `odoo:read` |
+| Write — critical | `odoo:critical` | `odoo:write` |
+| Any tier with `instance="prod"` | `odoo:prod` (in addition) | — |
+
 ## Read tools (Phase 1, shipped)
 
 ### `odoo_search_partners(instance, query, limit=20)`
@@ -75,6 +87,32 @@ rely on a stable result shape.
 
 Generic read-only tools so an agent can reach the long tail of Odoo without a
 bespoke tool per model. All read-tier — they never mutate state.
+
+> [!important] Access policy — default-deny on models, always-deny on fields
+> These three tools take the model name as a free string from the caller, so
+> they are constrained by `odoo_mcp/access.py`. Odoo's own ACL is the first
+> line and already blocks `ir.config_parameter`, `ir.mail_server`, `ir.logging`
+> and `ir.model` for the service user; the policy is the second line.
+>
+> **Allowed:** `account.*`, `product.*`, `uom.*`, plus `res.partner`,
+> `res.country`, `res.country.state`, `res.currency`, `res.currency.rate`,
+> `res.company`, `ir.attachment`. Anything else fails closed — including models
+> introduced later by a new Odoo module.
+>
+> **Denied models:** `res.users`, `res.groups`, `res.partner.bank`,
+> `mail.message`, `mail.followers`, and the `ir.*` administration models.
+> Denials are checked *before* the allow rules, so a future prefix change
+> cannot silently open one up.
+>
+> **Denied fields, on every model:** `datas`, `raw`, `db_datas`, `store_fname`,
+> `access_token`, `password*`, `signature`. Naming one raises; they are also
+> stripped from results, because omitting `fields` makes Odoo return its
+> default set. `access_token` matters most — it makes
+> `/web/content/<id>?access_token=…` fetchable with **no session at all**, so a
+> read permission would otherwise be enough to lift documents out permanently.
+>
+> To widen the domain, edit `ALLOWED_MODELS` in `odoo_mcp/access.py`
+> deliberately. There is no runtime override.
 
 ### `odoo_search_read(instance, model, domain?, fields?, limit=80, offset=0, order?)`
 
@@ -228,7 +266,9 @@ reconciles it with the invoice.
 
 - `journal_code`: short code of the bank/cash journal (e.g. `"BNK1"`)
 - `amount`: payment amount in the invoice's currency
-- `payment_date`: YYYY-MM-DD; defaults to the invoice date
+- `payment_date`: YYYY-MM-DD; defaults to the invoice date — and the write
+  path books exactly the date the preview showed. (Odoo's wizard defaults to
+  *today*, so this is resolved explicitly rather than left to the wizard.)
 
 - `confirm=False` → preview with the invoice summary + journal info
 - `confirm=True` → returns `{registered: True, payment_ids: [...], ...}`
@@ -236,21 +276,46 @@ reconciles it with the invoice.
 **Validates:** invoice in `posted` state, journal exists and is type
 `bank` or `cash`.
 
+> [!note] No `validators_passed` key
+> Unlike `odoo_post_journal_entry`, no validator registry runs for payments or
+> reversals, so those previews deliberately omit the key rather than reporting
+> a hardcoded `True`.
+
+> [!warning] This does not reconcile the bank statement
+> The payment is reconciled against the **invoice**. The corresponding
+> `account.bank.statement.line` is untouched and stays unreconciled. There is
+> no bank-statement reconciliation tool in this server.
+
 ### `odoo_reverse_move(instance, move_id, reason, journal_code=None, date=None, confirm=False, idempotency_key=None)`
 
 Reverse a posted `account.move` via Odoo's `account.move.reversal` wizard.
-Creates a new posted move with the original lines flipped (debit↔credit)
-and links it back via `reversed_entry_id`. The original is left untouched
-so the audit trail is preserved end-to-end.
+Creates a new move with the original lines flipped (debit↔credit) and links
+it back via `reversed_entry_id`. The original is left untouched so the audit
+trail is preserved end-to-end.
 
 - `reason`: short description; appears on the new move's ref
 - `journal_code`: optional; defaults to the same journal as the original
 - `date`: YYYY-MM-DD; defaults to today (Odoo wizard default)
+- `allow_additional_reversal`: default `False`. A move that already has a
+  reversal is rejected, because a second one nets the ledger back out while
+  leaving two spurious verifications behind.
 
-- `confirm=False` → preview with original-move summary + journal info
-- `confirm=True` → returns `{reversed: True, original, reversal: [{move_id, name, ...}]}`
+- `confirm=False` → preview with original-move summary, journal info and
+  `existing_reversals`
+- `confirm=True` → returns `{reversed: bool, reversal_state: [...], original,
+  reversal: [{move_id, name, state, ...}]}`
 
-**Validates:** original move is in `posted` state. Discovers the local
+> [!warning] `reversed: True` only when the reversal is actually posted
+> Odoo's `refund_moves()` posts and reconciles the reversal **only** when the
+> move's `move_type` is `entry` (a manual journal entry). For invoices, bills
+> and refunds it creates the credit note in **draft** and leaves the original
+> fully open. This tool reports what happened rather than what was intended:
+> `reversed` is `True` only when every created reversal is posted, and
+> `reversal_state` carries the per-move states either way. A draft reversal
+> still needs `odoo_post_journal_entry` before the correction takes effect.
+
+**Validates:** original move is in `posted` state, and is not already
+reversed unless `allow_additional_reversal=True`. Discovers the local
 Odoo's `account.move.reversal` field set at runtime so it works across
 Odoo 16/17/18/19 even when the wizard schema drifts.
 
