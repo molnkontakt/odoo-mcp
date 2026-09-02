@@ -65,6 +65,12 @@ SCOPE_PROD = "odoo:prod"
 
 ALL_SCOPES: tuple[str, ...] = (SCOPE_READ, SCOPE_WRITE, SCOPE_CRITICAL, SCOPE_PROD)
 
+#: Scopes that carry identity rather than permission. They grant nothing in
+#: this server, but the audit log's human-readable `actor` comes from the
+#: `email` claim, which the IdP only includes when `email` was requested — and
+#: a client that may not ask for a scope cannot be issued it.
+IDENTITY_SCOPES: tuple[str, ...] = ("openid", "profile", "email", "offline_access")
+
 #: Sent on the discovery request. See `discover_oidc`.
 USER_AGENT = "odoo-mcp/0.1 (+https://github.com/molnkontakt/odoo-mcp)"
 
@@ -354,7 +360,7 @@ def build_auth_provider(settings: AuthSettings | None = None) -> Any | None:
         upstream_client_secret=str(settings.client_secret),
         token_verifier=verifier,
         base_url=settings.base_url,
-        valid_scopes=list(ALL_SCOPES),
+        valid_scopes=list(ALL_SCOPES + IDENTITY_SCOPES),
         allowed_client_redirect_uris=list(settings.allowed_client_redirect_uris),
         # Every login goes through Authentik's own consent screen, and this
         # adds the "which client is asking" step on top. A DCR endpoint that

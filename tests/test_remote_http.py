@@ -331,3 +331,10 @@ class TestOAuthProxyMode:
         )
         assert resp.status_code == 401
         assert "resource_metadata=" in resp.headers["www-authenticate"]
+
+    def test_identity_scopes_are_requestable(self, proxy_server):
+        """`email` is not a permission, but the audit log's actor depends on it."""
+        doc = httpx.get(
+            f"{proxy_server}/.well-known/oauth-authorization-server"
+        ).json()
+        assert set(auth.IDENTITY_SCOPES).issubset(set(doc["scopes_supported"]))
