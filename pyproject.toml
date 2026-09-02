@@ -29,6 +29,13 @@ dev = [
     "mypy>=2.0.0",
 ]
 
+# The distribution name (molnkontakt-odoo-mcp) does not match the package
+# directory (odoo_mcp), so hatchling cannot guess what to ship — a fresh
+# `pip install .` fails at metadata generation. Editable installs happened to
+# work, which is why this survived until the first real deploy.
+[tool.hatch.build.targets.wheel]
+packages = ["src/odoo_mcp"]
+
 [project.scripts]
 odoo-mcp = "odoo_mcp.server:main"
 
