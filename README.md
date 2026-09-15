@@ -44,7 +44,7 @@ odoo-mcp
 ## Wire it into Claude Code
 
 ```bash
-claude mcp add odoo --transport stdio --command odoo-mcp
+claude mcp add odoo -- odoo-mcp
 ```
 
 ## Remote clients (claude.ai, Claude Desktop)
