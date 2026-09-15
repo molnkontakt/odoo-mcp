@@ -54,6 +54,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
+from odoo_mcp.instances import is_production
+
 #: Read tier: every tool in `tools/read.py`.
 SCOPE_READ = "odoo:read"
 #: Draft-creating tier: every tool in `tools/write_safe.py`.
@@ -454,7 +456,7 @@ def check_instance(instance: str, *, identity: Identity | None = None) -> None:
     """
     if not get_auth_settings().enabled:
         return
-    if str(instance).strip().lower() != "prod":
+    if not is_production(instance):
         return
 
     ident = current_identity() if identity is None else identity

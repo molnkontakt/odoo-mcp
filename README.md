@@ -20,11 +20,19 @@ cd odoo-mcp
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Set credentials in the environment (or a .env file via direnv/dotenv-cli)
+# Set credentials in the environment (or a .env file via direnv/dotenv-cli).
+# Every ODOO_<NAME>_URL defines an instance "<name>" (prod, dev, or anything else);
+# the set is discovered at start-up and exposed as the `instance` enum of every tool.
 export ODOO_DEV_URL=https://odoo-dev.example.com
 export ODOO_DEV_DB=odoo
 export ODOO_DEV_USER=user@example.com
 export ODOO_DEV_PASSWORD=...
+# A third instance, gated like prod (odoo:prod scope over HTTP):
+export ODOO_LUGNET_URL=https://odoo.example.org
+export ODOO_LUGNET_DB=odoo
+export ODOO_LUGNET_USER=...
+export ODOO_LUGNET_PASSWORD=...
+export ODOO_LUGNET_PRODUCTION=1
 
 # Optional — turn on audit logging
 export MCP_AUDIT_DB_URL=postgresql://user:pass@host/dbname

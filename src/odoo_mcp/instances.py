@@ -1,14 +1,39 @@
-"""Configuration for Odoo instances (prod + dev).
+"""Configuration for Odoo instances.
 
-Credentials come from environment variables, typically populated by a
-secret-manager (Phase, Vault, AWS SSM, etc.) or a `.env` file (gitignored).
+Instances are discovered from the environment at start-up: every
+``ODOO_<NAME>_URL`` defines an instance ``<name>`` (lower-cased), e.g.
+``ODOO_PROD_URL`` / ``ODOO_DEV_URL`` / ``ODOO_LUGNET_URL``. Credentials come from
+environment variables, typically populated by a secret-manager (Phase, Vault,
+AWS SSM, etc.) or a `.env` file (gitignored).
+
+An instance is treated as *production* (gated behind ``odoo:prod`` over HTTP)
+when it is named ``prod`` or when ``ODOO_<NAME>_PRODUCTION`` is truthy.
 """
 
 import os
 from dataclasses import dataclass
 from typing import Literal
 
-Instance = Literal["prod", "dev"]
+DEFAULT_INSTANCES = ("prod", "dev")
+_TRUE = ("1", "true", "yes", "on")
+
+
+def available_instances() -> tuple[str, ...]:
+    """Instance names configured in the environment, ``prod``/``dev`` first."""
+    found = {k[len("ODOO_"):-len("_URL")].lower() for k, v in os.environ.items()
+             if k.startswith("ODOO_") and k.endswith("_URL") and v and k.count("_") == 2}
+    ordered = [n for n in DEFAULT_INSTANCES if n in found] + sorted(found - set(DEFAULT_INSTANCES))
+    return tuple(ordered) or DEFAULT_INSTANCES
+
+
+# Built once at import: the MCP tool schemas expose it as an enum, so the server
+# must be started with the environment already populated (``phase run … -- odoo-mcp``).
+Instance = Literal[available_instances()]  # type: ignore[valid-type]
+
+
+def is_production(instance: str) -> bool:
+    name = str(instance).strip().lower()
+    return name == "prod" or os.environ.get(f"ODOO_{name.upper()}_PRODUCTION", "").strip().lower() in _TRUE
 
 
 @dataclass(frozen=True)
