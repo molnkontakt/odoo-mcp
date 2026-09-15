@@ -141,6 +141,8 @@ class OdooClient:
                               [[("name", "ilike", "Acme")]],
                               {"fields": ["id", "name"], "limit": 5})
         """
+        if self.config.impersonate:
+            return self._execute_as_caller(model, method, args, kwargs or {})
         return self._models.execute_kw(
             self.config.db,
             self.uid,
@@ -149,6 +151,30 @@ class OdooClient:
             method,
             args,
             kwargs or {},
+        )
+
+    def _execute_as_caller(
+        self, model: str, method: str, args: list[Any], kwargs: dict[str, Any]
+    ) -> Any:
+        """Impersonation: route the call through the `odoo_mcp_gateway` addon as the
+        OAuth caller. Fails closed: no authenticated caller → no call, never a
+        silent fallback to the service account."""
+        from odoo_mcp.auth import current_identity  # local import: auth imports instances
+
+        identity = current_identity()
+        if not identity.authenticated or not identity.actor or identity.actor == identity.actor_sub:
+            raise PermissionError(
+                f"Instance '{self.instance}' runs calls as the caller, but the request "
+                "carries no e-mail identity (no OAuth token, or the token lacks an email claim)."
+            )
+        return self._models.execute_kw(
+            self.config.db,
+            self.uid,
+            self.config.password,
+            "mcp.gateway",
+            "execute_as",
+            [identity.actor, model, method, args, kwargs],
+            {},
         )
 
 

@@ -42,6 +42,10 @@ class OdooConfig:
     db: str
     user: str
     password: str
+    #: Run every call as the OAuth caller through the `odoo_mcp_gateway` addon
+    #: (``ODOO_<NAME>_IMPERSONATE=1``). The service account then only needs
+    #: group_system for the gateway; Odoo's ACLs apply to the human.
+    impersonate: bool = False
 
 
 def get_config(instance: Instance) -> OdooConfig:
@@ -62,4 +66,5 @@ def get_config(instance: Instance) -> OdooConfig:
                 f"Set ODOO_{instance.upper()}_{{URL,DB,USER,PASSWORD}} before starting."
             )
         values[k.lower()] = v
+    values["impersonate"] = os.environ.get(prefix + "IMPERSONATE", "").strip().lower() in _TRUE
     return OdooConfig(**values)
