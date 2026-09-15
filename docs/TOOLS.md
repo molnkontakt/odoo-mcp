@@ -150,6 +150,10 @@ Thin lookups for picking the right code/id when building entries/invoices:
 
 | Tool | Returns |
 |------|---------|
+| `odoo_overdue_invoices(instance, company_id?, as_of?, min_days_overdue=0, partner_id?, limit=200)` | posted customer invoices past due with a balance: days overdue, last/next reminder level (when `account_invoice_reminder` is installed) |
+| `odoo_unpaid_by_customer(instance, company_id?, include_not_due=True, limit=500)` | open customer balances grouped per customer, overdue first |
+| `odoo_unreconciled_bank_lines(instance, company_id?, journal_code?, date_from?, limit=200)` | bank statement lines still unreconciled, net per journal |
+| `odoo_customer_statement(instance, partner_id, company_id?, include_paid=False, limit=100)` | one customer's invoices/credit notes and balance due |
 | `odoo_list_companies(instance)` | companies: `id, name, currency_id` — journals and accounts are per company |
 | `odoo_list_journals(instance, company_id?)` | journals: `id, code, name, type, company_id` |
 | `odoo_list_accounts(instance, query?, account_type?, limit=200, company_id?)` | CoA: `id, code, name, account_type, company_ids` |
