@@ -98,7 +98,7 @@ def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
         "account.move", "read", [int(move_id)],
         {"fields": ["id", "name", "ref", "date", "state", "move_type",
                     "amount_total", "amount_residual", "currency_id",
-                    "partner_id", "line_ids"]},
+                    "partner_id", "line_ids", "company_id"]},
     )
     if not moves:
         raise ValidationError(f"Move {move_id} not found")
@@ -106,6 +106,8 @@ def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
     line_count = len(move.get("line_ids") or [])
     return {
         "move_id": int(move["id"]),
+        "company_id": int(move["company_id"][0]) if move.get("company_id") else None,
+        "company": move["company_id"][1] if move.get("company_id") else None,
         "name": move.get("name"),
         "ref": move.get("ref"),
         "date": move.get("date"),
@@ -285,14 +287,19 @@ def odoo_register_payment(
             f"register payment against posted moves."
         )
 
+    # The invoice fixes the company; the journal must be that company's (codes repeat per company).
+    journal_domain: list[Any] = [("code", "=", journal_code), ("type", "in", ["bank", "cash"])]
+    if invoice.get("company_id"):
+        journal_domain.append(("company_id", "=", invoice["company_id"]))
     journals = client.execute_kw(
         "account.journal", "search_read",
-        [[("code", "=", journal_code), ("type", "in", ["bank", "cash"])]],
+        [journal_domain],
         {"fields": ["id", "code", "name", "type"], "limit": 1},
     )
     if not journals:
         raise ValidationError(
-            f"No bank/cash journal with code '{journal_code}' on {instance}"
+            f"No bank/cash journal with code '{journal_code}' in company "
+            f"{invoice.get('company') or '?'} on {instance}"
         )
     journal = journals[0]
 
@@ -493,25 +500,29 @@ def odoo_reverse_move(
             f"posted moves can be reversed."
         )
 
-    # Resolve target journal — default to the original's journal
+    # Resolve target journal — default to the original's journal, always within the original's company
+    moves = client.execute_kw(
+        "account.move", "read", [int(move_id)],
+        {"fields": ["journal_id", "company_id"]},
+    )
+    if not moves:
+        raise ValidationError(f"Move {move_id} not found")
     if journal_code:
+        journal_domain: list[Any] = [("code", "=", journal_code)]
+        if moves[0].get("company_id"):
+            journal_domain.append(("company_id", "=", int(moves[0]["company_id"][0])))
         journals = client.execute_kw(
             "account.journal", "search_read",
-            [[("code", "=", journal_code)]],
+            [journal_domain],
             {"fields": ["id", "code"], "limit": 1},
         )
         if not journals:
             raise ValidationError(
-                f"No journal with code '{journal_code}' on {instance}"
+                f"No journal with code '{journal_code}' in the move's company on {instance}"
             )
         journal_id = int(journals[0]["id"])
     else:
-        # Read original's journal_id
-        moves = client.execute_kw(
-            "account.move", "read", [int(move_id)],
-            {"fields": ["journal_id"]},
-        )
-        journal_id = int(moves[0]["journal_id"][0]) if moves and moves[0].get("journal_id") else None
+        journal_id = int(moves[0]["journal_id"][0]) if moves[0].get("journal_id") else None
         if journal_id is None:
             raise ValidationError(f"Move {move_id} has no journal_id")
 
