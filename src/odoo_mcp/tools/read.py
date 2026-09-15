@@ -532,15 +532,35 @@ def odoo_fields_get(
 
 @mcp.tool()
 @requires_scope(SCOPE_READ)
-def odoo_list_journals(instance: Instance) -> list[dict[str, Any]]:
-    """List account journals (id, code, name, type).
+def odoo_list_journals(
+    instance: Instance, company_id: int | None = None
+) -> list[dict[str, Any]]:
+    """List account journals (id, code, name, type, company_id).
 
-    Handy for picking a `journal_code` for entry/invoice/payment tools.
+    Handy for picking a `journal_code` for entry/invoice/payment tools. In a
+    multi-company database the same code exists once per company, so pass
+    `company_id` (see `odoo_list_companies`) to the write tools as well.
+    """
+    client = get_client(instance)
+    domain: list[Any] = [("company_id", "=", company_id)] if company_id else []
+    return client.execute_kw(
+        "account.journal", "search_read", [domain],
+        {"fields": ["id", "code", "name", "type", "company_id"], "order": "company_id, type, code"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_companies(instance: Instance) -> list[dict[str, Any]]:
+    """List the companies the caller may act in (id, name, currency).
+
+    Journals and accounts are per company; use the id as `company_id` in the
+    other tools when the database holds more than one company.
     """
     client = get_client(instance)
     return client.execute_kw(
-        "account.journal", "search_read", [[]],
-        {"fields": ["id", "code", "name", "type"], "order": "type, code"},
+        "res.company", "search_read", [[]],
+        {"fields": ["id", "name", "currency_id"], "order": "id"},
     )
 
 
@@ -551,8 +571,9 @@ def odoo_list_accounts(
     query: str | None = None,
     account_type: str | None = None,
     limit: int = 200,
+    company_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """List/search the chart of accounts (id, code, name, account_type).
+    """List/search the chart of accounts (id, code, name, account_type, company_ids).
 
     Args:
         instance: "prod" or "dev"
@@ -560,6 +581,7 @@ def odoo_list_accounts(
         account_type: optional Odoo account_type filter, e.g. "asset_cash",
             "liability_payable", "income", "expense".
         limit: max rows (default 200).
+        company_id: restrict to one company (multi-company databases).
     """
     client = get_client(instance)
     domain: list[Any] = []
@@ -567,9 +589,11 @@ def odoo_list_accounts(
         domain = ["|", ("code", "ilike", query), ("name", "ilike", query)]
     if account_type:
         domain.append(("account_type", "=", account_type))
+    if company_id:
+        domain.append(("company_ids", "in", [company_id]))
     return client.execute_kw(
         "account.account", "search_read", [domain],
-        {"fields": ["id", "code", "name", "account_type"],
+        {"fields": ["id", "code", "name", "account_type", "company_ids"],
          "limit": limit, "order": "code"},
     )
 

@@ -24,29 +24,56 @@ from odoo_mcp.validators import (
 )
 
 
-def _resolve_journal(client: Any, journal_code: str | None, instance: str) -> int:
-    """Resolve a journal by code, defaulting to the company's general/misc journal."""
-    domain = [("code", "=", journal_code)] if journal_code else [("type", "=", "general")]
+def _resolve_journal(
+    client: Any, journal_code: str | None, instance: str, company_id: int | None = None
+) -> int:
+    """Resolve a journal by code, defaulting to the company's general/misc journal.
+
+    Journal codes repeat per company, so in a multi-company database the
+    caller must say which company; picking the first match silently would
+    book in the wrong ledger.
+    """
+    domain: list[Any] = [("code", "=", journal_code)] if journal_code else [("type", "=", "general")]
+    if company_id:
+        domain.append(("company_id", "=", company_id))
     journals = client.execute_kw(
         "account.journal", "search_read", [domain],
-        {"fields": ["id", "code", "name"], "limit": 1},
+        {"fields": ["id", "code", "name", "company_id"]},
     )
     if not journals:
         raise ValidationError(
-            f"No journal found on {instance} (code={journal_code or '<general>'})"
+            f"No journal found on {instance} (code={journal_code or '<general>'}"
+            f"{f', company_id={company_id}' if company_id else ''})"
+        )
+    if len(journals) > 1:
+        companies = ", ".join(f"{j['company_id'][1]} (company_id={j['company_id'][0]})" for j in journals)
+        raise ValidationError(
+            f"Journal {journal_code or '<general>'} exists in several companies on {instance}: "
+            f"{companies}. Pass company_id."
         )
     return int(journals[0]["id"])
 
 
 def _resolve_account_ids(
-    client: Any, codes: list[str], instance: str
+    client: Any, codes: list[str], instance: str, company_id: int | None = None
 ) -> dict[str, int]:
+    domain: list[Any] = [("code", "in", codes)]
+    if company_id:
+        domain.append(("company_ids", "in", [company_id]))
     accs = client.execute_kw(
         "account.account", "search_read",
-        [[("code", "in", codes)]],
-        {"fields": ["id", "code"]},
+        [domain],
+        {"fields": ["id", "code", "company_ids"]},
     )
-    by_code = {a["code"]: int(a["id"]) for a in accs}
+    seen: dict[str, list[int]] = {}
+    for a in accs:
+        seen.setdefault(a["code"], []).append(int(a["id"]))
+    dupes = [c for c, ids in seen.items() if len(ids) > 1]
+    if dupes:
+        raise ValidationError(
+            f"Account code(s) exist in several companies on {instance}: {', '.join(dupes)}. Pass company_id."
+        )
+    by_code = {c: ids[0] for c, ids in seen.items()}
     missing = [c for c in codes if c not in by_code]
     if missing:
         raise ValidationError(
@@ -114,6 +141,7 @@ def odoo_create_journal_entry_draft(
     lines: list[dict[str, Any]],
     ref: str | None = None,
     journal_code: str | None = None,
+    company_id: int | None = None,
 ) -> dict[str, Any]:
     """Create an account.move in `draft` state with the given lines.
 
@@ -180,11 +208,11 @@ def odoo_create_journal_entry_draft(
     ) as ctx:
         get_registry().run(payload, client)
 
-        journal_id = _resolve_journal(client, journal_code, instance)
+        journal_id = _resolve_journal(client, journal_code, instance, company_id)
         account_ids = _resolve_account_ids(
             client,
             sorted({line.account_code for line in line_payloads}),
-            instance,
+            instance, company_id,
         )
         all_tag_codes = sorted({tag for line in line_payloads for tag in line.tax_tag_codes})
         tag_ids = _resolve_tax_tag_ids(client, all_tag_codes, instance)
@@ -346,6 +374,7 @@ def odoo_create_invoice(
     invoice_date: str | None = None,
     ref: str | None = None,
     journal_code: str | None = None,
+    company_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a DRAFT customer/vendor invoice (or refund).
 
@@ -425,7 +454,7 @@ def odoo_create_invoice(
             {line.account_code for line in line_payloads if line.account_code}
         )
         account_ids = (
-            _resolve_account_ids(client, account_codes, instance)
+            _resolve_account_ids(client, account_codes, instance, company_id)
             if account_codes
             else {}
         )
@@ -456,8 +485,10 @@ def odoo_create_invoice(
             move_vals["invoice_date"] = invoice_date
         if ref:
             move_vals["ref"] = ref
+        if company_id:
+            move_vals["company_id"] = company_id
         if journal_code:
-            move_vals["journal_id"] = _resolve_journal(client, journal_code, instance)
+            move_vals["journal_id"] = _resolve_journal(client, journal_code, instance, company_id)
 
         move_id = client.execute_kw("account.move", "create", [move_vals])
         res = client.execute_kw(

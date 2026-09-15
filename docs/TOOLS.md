@@ -150,8 +150,9 @@ Thin lookups for picking the right code/id when building entries/invoices:
 
 | Tool | Returns |
 |------|---------|
-| `odoo_list_journals(instance)` | journals: `id, code, name, type` |
-| `odoo_list_accounts(instance, query?, account_type?, limit=200)` | CoA: `id, code, name, account_type` |
+| `odoo_list_companies(instance)` | companies: `id, name, currency_id` — journals and accounts are per company |
+| `odoo_list_journals(instance, company_id?)` | journals: `id, code, name, type, company_id` |
+| `odoo_list_accounts(instance, query?, account_type?, limit=200, company_id?)` | CoA: `id, code, name, account_type, company_ids` |
 | `odoo_list_taxes(instance, type_tax_use?)` | taxes: `id, name, amount, amount_type, type_tax_use, price_include` |
 | `odoo_list_tax_tags(instance)` | tax-report tags: `id, name` (the `tax_tag_codes` values) |
 | `odoo_list_products(instance, query?, limit=50)` | products: `id, name, default_code, list_price, uom_id` |
@@ -166,7 +167,10 @@ All payloads run through validators (`BalanceValidator`,
 `AccountsExistValidator`, `TaxTagsExistValidator`, plus any plugins loaded
 via `MCP_VALIDATORS_PATH`) before reaching Odoo.
 
-### `odoo_create_journal_entry_draft(instance, date, lines, ref?, journal_code?)`
+### `odoo_create_journal_entry_draft(instance, date, lines, ref?, journal_code?, company_id?)`
+
+Multi-company: `journal_code` and account codes are resolved within `company_id`; without it,
+a code that exists in several companies is rejected rather than picked silently.
 
 Create an `account.move` in `draft` state.
 
@@ -199,7 +203,7 @@ the parent move is in draft state — Odoo locks tags on posted moves.
 
 **Returns:** `{line_id, applied_tags}`.
 
-### `odoo_create_invoice(instance, move_type, partner_id, lines, invoice_date?, ref?, journal_code?)`
+### `odoo_create_invoice(instance, move_type, partner_id, lines, invoice_date?, ref?, journal_code?, company_id?)`
 
 Create a **draft** customer/vendor invoice or refund. Odoo computes the tax
 lines + totals from each line's taxes — the correct way to make a VAT-bearing
