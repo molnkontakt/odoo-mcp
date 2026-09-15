@@ -63,7 +63,7 @@ class TestThreadIsolation:
                 proxy = offline_client._models
                 with lock:
                     grabbed.append(proxy)
-            except BaseException as exc:  # pragma: no cover - failure path
+            except Exception as exc:  # pragma: no cover - failure path
                 errors.append(exc)
 
         threads = [threading.Thread(target=grab) for _ in range(8)]

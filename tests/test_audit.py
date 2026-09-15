@@ -295,11 +295,10 @@ class TestAuditCall:
         assert update and update[-1][1][0] == "ok"
 
     def test_marks_committed_when_body_fails_after_mark(self, fake_pg):
-        with pytest.raises(ValueError), audit.audit_call(
-            tool="t", instance="dev", params={}
-        ) as ctx:
-            ctx.mark_committed()
-            raise ValueError("parsing blew up after Odoo committed")
+        with pytest.raises(ValueError):  # noqa: SIM117 — nested on purpose: the raise must exit audit_call first
+            with audit.audit_call(tool="t", instance="dev", params={}) as ctx:
+                ctx.mark_committed()
+                raise ValueError("parsing blew up after Odoo committed")
         conn = fake_pg.conns[-1]
         update = [s for s in conn.executed if s[0].startswith("UPDATE")]
         assert update and update[-1][1][0] == "committed"
