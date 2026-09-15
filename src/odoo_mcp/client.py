@@ -162,10 +162,12 @@ class OdooClient:
         from odoo_mcp.auth import current_identity  # local import: auth imports instances
 
         identity = current_identity()
-        if not identity.authenticated or not identity.actor or identity.actor == identity.actor_sub:
+        # actor = email claim, else preferred_username/name, else sub. With Authentik's
+        # sub_mode=user_email the sub *is* the login, so a sub-only token is fine too.
+        if not identity.authenticated or not identity.actor:
             raise PermissionError(
                 f"Instance '{self.instance}' runs calls as the caller, but the request "
-                "carries no e-mail identity (no OAuth token, or the token lacks an email claim)."
+                "carries no identity (no OAuth token, or a token without sub/email claims)."
             )
         return self._models.execute_kw(
             self.config.db,
