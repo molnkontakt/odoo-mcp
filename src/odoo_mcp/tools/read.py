@@ -5,7 +5,7 @@ from typing import Any
 from odoo_mcp.access import DENIED_FIELDS, check_fields, check_model, scrub_rows
 from odoo_mcp.app import mcp
 from odoo_mcp.auth import SCOPE_READ, requires_scope
-from odoo_mcp.client import get_client
+from odoo_mcp.client import enter_company_scope, get_client
 from odoo_mcp.instances import Instance
 
 
@@ -115,6 +115,7 @@ def odoo_search_invoices(
         company_id: restrict to one company (names like BNK1/2026/0014 repeat per company)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("date", ">=", date_from), ("date", "<=", date_to)]
     if move_type:
         domain.append(("move_type", "=", move_type))
@@ -160,6 +161,7 @@ def odoo_search_journal_entries(
         company_id: restrict to one company; entry names repeat per company
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("move_type", "=", "entry")]
     if date_from:
         domain.append(("date", ">=", date_from))
@@ -263,6 +265,7 @@ def odoo_get_account_balance(
         {account_code, account_name, company, debit_sum, credit_sum, balance, line_count}
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     acc_domain: list[Any] = [("code", "=", account_code)]
     if company_id:
         acc_domain.append(("company_ids", "in", [company_id]))
@@ -334,6 +337,7 @@ def odoo_query_account_aggregate(
     if not account_codes:
         return []
     client = get_client(instance)
+    enter_company_scope(company_id)
     acc_domain: list[Any] = [("code", "in", account_codes)]
     if company_id:
         acc_domain.append(("company_ids", "in", [company_id]))
@@ -571,6 +575,7 @@ def odoo_list_journals(
     `company_id` (see `odoo_list_companies`) to the write tools as well.
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("company_id", "=", company_id)] if company_id else []
     return client.execute_kw(
         "account.journal", "search_read", [domain],
@@ -613,6 +618,7 @@ def odoo_list_accounts(
         company_id: restrict to one company (multi-company databases).
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = []
     if query:
         domain = ["|", ("code", "ilike", query), ("name", "ilike", query)]

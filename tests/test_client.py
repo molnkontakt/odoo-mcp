@@ -138,3 +138,16 @@ class TestTimeouts:
         assert conn.timeout == 7
         # Cached per transport, as upstream does for keep-alive.
         assert transport.make_connection("odoo.invalid") is conn
+
+
+def test_company_scope_adds_allowed_company_ids():
+    from odoo_mcp.client import _with_company, company_scope
+
+    assert _with_company({"fields": ["id"]}) == {"fields": ["id"]}
+    with company_scope(3):
+        kw = _with_company({"fields": ["id"]})
+        assert kw["context"]["allowed_company_ids"] == [3] and kw["context"]["company_id"] == 3
+        # an explicit caller context wins
+        kw = _with_company({"context": {"allowed_company_ids": [1, 2]}})
+        assert kw["context"]["allowed_company_ids"] == [1, 2]
+    assert _with_company({}) == {}

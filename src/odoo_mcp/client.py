@@ -24,9 +24,11 @@ must not be shared.
 
 from __future__ import annotations
 
+import contextvars
 import http.client
 import threading
 import xmlrpc.client
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
 
@@ -78,6 +80,41 @@ def _make_proxy(url: str, timeout: float = DEFAULT_TIMEOUT) -> xmlrpc.client.Ser
     else:
         transport = _TimeoutTransport(timeout=timeout)
     return xmlrpc.client.ServerProxy(url, allow_none=True, transport=transport)
+
+
+#: Company the current tool call works in. Odoo scopes many models (accounts,
+#: journals, taxes …) by ``allowed_company_ids`` in the context, so a call that
+#: names a company must send it, or a multi-company user's default company
+#: silently wins. Set with ``company_scope()``; read by every execute_kw.
+_company_scope: contextvars.ContextVar[int | None] = contextvars.ContextVar("odoo_mcp_company", default=None)
+
+
+@contextmanager
+def company_scope(company_id: int | None):
+    token = _company_scope.set(int(company_id) if company_id else None)
+    try:
+        yield
+    finally:
+        _company_scope.reset(token)
+
+
+def enter_company_scope(company_id: int | None) -> None:
+    """Non-context-manager form for tool bodies: scope the rest of this call.
+
+    ContextVars are per task/thread, and FastMCP runs each tool call in its
+    own; nothing leaks to the next request.
+    """
+    _company_scope.set(int(company_id) if company_id else None)
+
+
+def _with_company(kwargs: dict[str, Any]) -> dict[str, Any]:
+    cid = _company_scope.get()
+    if not cid:
+        return kwargs
+    ctx = dict(kwargs.get("context") or {})
+    ctx.setdefault("allowed_company_ids", [cid])
+    ctx.setdefault("company_id", cid)
+    return {**kwargs, "context": ctx}
 
 
 class OdooClient:
@@ -141,8 +178,9 @@ class OdooClient:
                               [[("name", "ilike", "Acme")]],
                               {"fields": ["id", "name"], "limit": 5})
         """
+        kwargs = _with_company(kwargs or {})
         if self.config.impersonate:
-            return self._execute_as_caller(model, method, args, kwargs or {})
+            return self._execute_as_caller(model, method, args, kwargs)
         return self._models.execute_kw(
             self.config.db,
             self.uid,
@@ -150,7 +188,7 @@ class OdooClient:
             model,
             method,
             args,
-            kwargs or {},
+            kwargs,
         )
 
     def _execute_as_caller(

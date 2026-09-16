@@ -12,7 +12,7 @@ from typing import Any
 from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
 from odoo_mcp.auth import SCOPE_WRITE, requires_scope
-from odoo_mcp.client import get_client
+from odoo_mcp.client import enter_company_scope, get_client
 from odoo_mcp.instances import Instance, resolve_instance
 from odoo_mcp.validators import (
     InvoiceLinePayload,
@@ -193,6 +193,7 @@ def odoo_create_journal_entry_draft(
         company_id=company_id,
     )
     client = get_client(instance)
+    enter_company_scope(company_id)
 
     audit_params = {
         "date": date,
@@ -436,6 +437,7 @@ def odoo_create_invoice(
         company_id=company_id,
     )
     client = get_client(instance)
+    enter_company_scope(company_id)
     audit_params = {
         "move_type": move_type,
         "partner_id": int(partner_id),

@@ -18,7 +18,7 @@ from typing import Any
 
 from odoo_mcp.app import mcp
 from odoo_mcp.auth import SCOPE_READ, requires_scope
-from odoo_mcp.client import get_client
+from odoo_mcp.client import enter_company_scope, get_client
 from odoo_mcp.instances import Instance
 
 _OPEN_STATES = ("not_paid", "partial")
@@ -60,6 +60,7 @@ def odoo_overdue_invoices(
         limit: max rows (default 200)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     today = date.fromisoformat(as_of) if as_of else date.today()
     domain: list[Any] = [
         ("move_type", "=", "out_invoice"), ("state", "=", "posted"),
@@ -119,6 +120,7 @@ def odoo_unpaid_by_customer(
         limit: max invoices scanned (default 500)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     today = date.today().isoformat()
     domain: list[Any] = [("move_type", "=", "out_invoice"), ("state", "=", "posted"), ("payment_state", "in", list(_OPEN_STATES))]
     if company_id:
@@ -166,6 +168,7 @@ def odoo_unreconciled_bank_lines(
         limit: max rows (default 200)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("is_reconciled", "=", False)]
     if company_id:
         domain.append(("company_id", "=", company_id))
@@ -205,6 +208,7 @@ def odoo_customer_statement(
         limit: max rows (default 100)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("move_type", "in", ["out_invoice", "out_refund"]), ("state", "=", "posted"),
                          "|", ("partner_id", "=", partner_id), ("partner_id.commercial_partner_id", "=", partner_id)]
     if company_id:
