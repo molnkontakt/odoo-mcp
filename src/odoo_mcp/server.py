@@ -68,7 +68,13 @@ def check_http_is_authenticated(env: dict[str, str] | None = None) -> None:
 def main() -> None:
     """Run the MCP server over the configured transport."""
     # Tool modules register themselves on import via @mcp.tool()
-    from odoo_mcp.tools import read, receivables, write_critical, write_safe  # noqa: F401
+    from odoo_mcp.tools import (  # noqa: F401
+        attachments,
+        read,
+        receivables,
+        write_critical,
+        write_safe,
+    )
 
     transport = resolve_transport()
     if transport == "stdio":

@@ -26,11 +26,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Inline rendering of receipts/invoices (odoo_get_attachment_image): Pillow for
+# raster images, PyMuPDF for PDF pages. Without it the two attachment tools
+# still list files but report that rendering is not installed.
+images = [
+    "Pillow>=10",
+    "pymupdf>=1.24",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.12",
     "mypy>=2.0.0",
+    "Pillow>=10",
+    "pymupdf>=1.24",
 ]
 
 # The distribution name (molnkontakt-odoo-mcp) does not match the package

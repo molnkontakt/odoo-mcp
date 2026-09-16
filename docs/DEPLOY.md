@@ -10,7 +10,7 @@ matches your environment.
 git clone https://github.com/molnkontakt/odoo-mcp.git
 cd odoo-mcp
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,images]"   # images: Pillow + PyMuPDF for odoo_get_attachment_image
 
 cat > .env <<'EOF'
 ODOO_DEV_URL=https://odoo-dev.example.com
