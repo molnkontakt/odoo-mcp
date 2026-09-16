@@ -46,6 +46,7 @@ class JournalEntryPayload:
     ref: str | None
     journal_code: str | None
     lines: list[JournalLinePayload]
+    company_id: int | None = None
 
 
 @dataclass
@@ -81,6 +82,7 @@ class InvoicePayload:
     invoice_date: str | None = None
     ref: str | None = None
     journal_code: str | None = None
+    company_id: int | None = None
 
 
 class Validator(Protocol):
@@ -127,9 +129,13 @@ class AccountsExistValidator:
         codes = sorted({line.account_code for line in payload.lines})
         if not codes:
             return
+        domain: list[Any] = [("code", "in", codes)]
+        company_id = getattr(payload, "company_id", None)
+        if company_id:
+            domain.append(("company_ids", "in", [company_id]))
         accs = client.execute_kw(
             "account.account", "search_read",
-            [[("code", "in", codes)]],
+            [domain],
             {"fields": ["code"]},
         )
         found = {a["code"] for a in accs}

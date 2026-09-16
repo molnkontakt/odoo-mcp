@@ -183,15 +183,15 @@ def odoo_create_journal_entry_draft(
         )
         for line in lines
     ]
+    instance = resolve_instance(instance)
     payload = JournalEntryPayload(
         instance=instance,
         date=date,
         ref=ref,
         journal_code=journal_code,
         lines=line_payloads,
+        company_id=company_id,
     )
-
-    instance = resolve_instance(instance)
     client = get_client(instance)
 
     audit_params = {
@@ -424,6 +424,7 @@ def odoo_create_invoice(
         )
         for line in lines
     ]
+    instance = resolve_instance(instance)
     payload = InvoicePayload(
         instance=instance,
         move_type=move_type,
@@ -432,9 +433,8 @@ def odoo_create_invoice(
         invoice_date=invoice_date,
         ref=ref,
         journal_code=journal_code,
+        company_id=company_id,
     )
-
-    instance = resolve_instance(instance)
     client = get_client(instance)
     audit_params = {
         "move_type": move_type,

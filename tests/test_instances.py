@@ -49,6 +49,7 @@ def test_critical_audit_refuses_null_instance(monkeypatch):
     from odoo_mcp import audit
 
     monkeypatch.setenv("MCP_AUDIT_DB_URL", "postgresql://x")
-    with pytest.raises(audit.AuditUnavailable, match="resolved instance"):
-        with audit.audit_call(tool="odoo_post_journal_entry", instance=None, params={}, critical=True):
-            pass
+    with pytest.raises(audit.AuditUnavailable, match="resolved instance"), audit.audit_call(
+        tool="odoo_post_journal_entry", instance=None, params={}, critical=True
+    ):
+        pass
