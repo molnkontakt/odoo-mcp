@@ -28,11 +28,11 @@ export ODOO_DEV_DB=odoo
 export ODOO_DEV_USER=user@example.com
 export ODOO_DEV_PASSWORD=...
 # A third instance, gated like prod (odoo:prod scope over HTTP):
-export ODOO_LUGNET_URL=https://odoo.example.org
-export ODOO_LUGNET_DB=odoo
-export ODOO_LUGNET_USER=...
-export ODOO_LUGNET_PASSWORD=...
-export ODOO_LUGNET_PRODUCTION=1
+export ODOO_ACME_URL=https://odoo.acme.example
+export ODOO_ACME_DB=odoo
+export ODOO_ACME_USER=...
+export ODOO_ACME_PASSWORD=...
+export ODOO_ACME_PRODUCTION=1
 
 # Optional — turn on audit logging
 export MCP_AUDIT_DB_URL=postgresql://user:pass@host/dbname

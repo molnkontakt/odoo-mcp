@@ -241,7 +241,7 @@ def discover_oidc(issuer: str, *, timeout: float = 10.0) -> dict[str, Any]:
     # An explicit User-Agent, because urllib's default (`Python-urllib/3.x`) is
     # blocked outright by Cloudflare's managed bot rules — a 403 that reads
     # like a dead endpoint or a firewall problem. Verified against
-    # auth.molnkontakt.se 2026-09-02: urllib's default 403s, everything else
+    # Observed against an Authentik behind Cloudflare: urllib's default UA 403s, everything else
     # (including httpx's default, which fastmcp uses for JWKS) gets 200.
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
