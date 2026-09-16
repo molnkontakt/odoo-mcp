@@ -18,7 +18,7 @@ see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 git clone https://github.com/molnkontakt/odoo-mcp.git
 cd odoo-mcp
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,images]"
 
 # Set credentials in the environment (or a .env file via direnv/dotenv-cli).
 # Every ODOO_<NAME>_URL defines an instance "<name>" (prod, dev, or anything else);
