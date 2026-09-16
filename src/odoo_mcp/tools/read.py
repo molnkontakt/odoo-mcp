@@ -99,6 +99,7 @@ def odoo_search_invoices(
     state: str | None = None,
     partner_id: int | None = None,
     limit: int = 50,
+    company_id: int | None = None,
     instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Search account.move (invoices and journal entries).
@@ -111,6 +112,7 @@ def odoo_search_invoices(
         state: optional, "draft" or "posted"
         partner_id: optional partner filter
         limit: max results (default 50)
+        company_id: restrict to one company (names like BNK1/2026/0014 repeat per company)
     """
     client = get_client(instance)
     domain: list[Any] = [("date", ">=", date_from), ("date", "<=", date_to)]
@@ -120,8 +122,10 @@ def odoo_search_invoices(
         domain.append(("state", "=", state))
     if partner_id:
         domain.append(("partner_id", "=", partner_id))
+    if company_id:
+        domain.append(("company_id", "=", company_id))
     fields = ["id", "name", "ref", "date", "state", "move_type",
-              "partner_id", "amount_total", "amount_residual", "currency_id"]
+              "partner_id", "amount_total", "amount_residual", "currency_id", "company_id"]
     return client.execute_kw(
         "account.move", "search_read", [domain],
         {"fields": fields, "limit": limit, "order": "date desc"},
@@ -137,6 +141,7 @@ def odoo_search_journal_entries(
     state: str | None = None,
     journal_code: str | None = None,
     limit: int = 50,
+    company_id: int | None = None,
     instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Search account.move with `move_type='entry'` (manual journal entries).
@@ -152,6 +157,7 @@ def odoo_search_journal_entries(
         state: optional, "draft" or "posted"
         journal_code: optional filter on journal short code (e.g. "MISC")
         limit: max results (default 50)
+        company_id: restrict to one company; entry names repeat per company
     """
     client = get_client(instance)
     domain: list[Any] = [("move_type", "=", "entry")]
@@ -165,7 +171,9 @@ def odoo_search_journal_entries(
         domain.append(("state", "=", state))
     if journal_code:
         domain.append(("journal_id.code", "=", journal_code))
-    fields = ["id", "name", "ref", "date", "state", "journal_id"]
+    if company_id:
+        domain.append(("company_id", "=", company_id))
+    fields = ["id", "name", "ref", "date", "state", "journal_id", "company_id"]
     return client.execute_kw(
         "account.move", "search_read", [domain],
         {"fields": fields, "limit": limit, "order": "date desc, id desc"},
@@ -235,6 +243,7 @@ def odoo_get_account_balance(
     account_code: str,
     date_from: str | None = None,
     date_to: str | None = None,
+    company_id: int | None = None,
     instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Sum debit-credit on account.move.line for the given account code.
@@ -248,18 +257,27 @@ def odoo_get_account_balance(
         account_code: account code, e.g. "2611" or "6231"
         date_from: optional start date inclusive
         date_to: optional end date inclusive
+        company_id: which company's account (required when the code exists in several)
 
     Returns:
-        {account_code, account_name, debit_sum, credit_sum, balance, line_count}
+        {account_code, account_name, company, debit_sum, credit_sum, balance, line_count}
     """
     client = get_client(instance)
+    acc_domain: list[Any] = [("code", "=", account_code)]
+    if company_id:
+        acc_domain.append(("company_ids", "in", [company_id]))
     accs = client.execute_kw(
         "account.account", "search_read",
-        [[("code", "=", account_code)]],
-        {"fields": ["id", "code", "name"], "limit": 1},
+        [acc_domain],
+        {"fields": ["id", "code", "name", "company_ids"]},
     )
     if not accs:
         raise ValueError(f"Account {account_code} not found on {instance}")
+    if len(accs) > 1:
+        raise ValueError(
+            f"Account {account_code} exists in several companies on {instance} "
+            f"(company_ids {[a['company_ids'] for a in accs]}); pass company_id."
+        )
     acc = accs[0]
 
     domain: list[Any] = [("account_id", "=", acc["id"]),
@@ -292,6 +310,7 @@ def odoo_query_account_aggregate(
     date_from: str,
     date_to: str,
     state: str = "posted",
+    company_id: int | None = None,
     instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate debit/credit per account across multiple accounts in a period.
@@ -302,6 +321,7 @@ def odoo_query_account_aggregate(
     Args:
         instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         account_codes: list of account codes to aggregate, e.g. ["2611", "2614", "2641"]
+        company_id: which company's accounts (required when a code exists in several)
         date_from: YYYY-MM-DD inclusive
         date_to: YYYY-MM-DD inclusive
         state: "posted" (default) or "draft" — applied to the parent move
@@ -314,11 +334,19 @@ def odoo_query_account_aggregate(
     if not account_codes:
         return []
     client = get_client(instance)
+    acc_domain: list[Any] = [("code", "in", account_codes)]
+    if company_id:
+        acc_domain.append(("company_ids", "in", [company_id]))
     accs = client.execute_kw(
         "account.account", "search_read",
-        [[("code", "in", account_codes)]],
-        {"fields": ["id", "code", "name"]},
+        [acc_domain],
+        {"fields": ["id", "code", "name", "company_ids"]},
     )
+    dupes = sorted({a["code"] for a in accs if sum(1 for b in accs if b["code"] == a["code"]) > 1})
+    if dupes:
+        raise ValueError(
+            f"Account code(s) exist in several companies on {instance}: {', '.join(dupes)}. Pass company_id."
+        )
     by_code = {a["code"]: a for a in accs}
     acc_ids = [a["id"] for a in accs]
 

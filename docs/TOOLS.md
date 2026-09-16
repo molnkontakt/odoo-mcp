@@ -2,6 +2,8 @@
 
 Reference for every MCP tool exposed by `odoo-mcp`.
 
+> **Multi-company reads.** Search results carry `company_id`; move names (`BNK1/2026/0014`) and account codes repeat per company. `odoo_get_account_balance` / `odoo_query_account_aggregate` refuse an account code that exists in several companies unless `company_id` is given.
+
 > `instance` is the last, optional parameter of every tool: it may be omitted when the server has a single configured instance.
 
 ## Common parameters
@@ -38,7 +40,7 @@ Get full info for one partner.
 **Returns:** `{id, name, display_name, vat, country_code, is_company,
 email, phone, street, city, zip, customer_rank, supplier_rank}`.
 
-### `odoo_search_invoices(instance, date_from, date_to, move_type?, state?, partner_id?, limit=50)`
+### `odoo_search_invoices(instance, date_from, date_to, move_type?, state?, partner_id?, limit=50, company_id?)`
 
 Search `account.move` (invoices and journal entries) within a date range.
 
@@ -49,7 +51,7 @@ Search `account.move` (invoices and journal entries) within a date range.
 **Returns:** list of header fields per move (id, name, ref, date, state,
 move_type, partner_id, amount_total, amount_residual, currency_id).
 
-### `odoo_search_journal_entries(instance, date_from?, date_to?, ref?, state?, journal_code?, limit=50)`
+### `odoo_search_journal_entries(instance, date_from?, date_to?, ref?, state?, journal_code?, limit=50, company_id?)`
 
 Search `account.move` filtered to `move_type='entry'` (manual journal entries).
 
@@ -65,7 +67,7 @@ Get full `account.move` with all journal lines resolved.
 **Returns:** header dict plus a `lines` array. Each line:
 `{id, name, account_code, debit, credit, partner_id, tax_tag_codes}`.
 
-### `odoo_get_account_balance(instance, account_code, date_from?, date_to?)`
+### `odoo_get_account_balance(instance, account_code, date_from?, date_to?, company_id?)`
 
 Sum `debit - credit` on `account.move.line` for a given account code,
 restricted to posted moves.
@@ -76,7 +78,7 @@ restricted to posted moves.
 
 **Returns:** `{account_code, account_name, debit_sum, credit_sum, balance, line_count}`.
 
-### `odoo_query_account_aggregate(instance, account_codes, date_from, date_to, state="posted")`
+### `odoo_query_account_aggregate(instance, account_codes, date_from, date_to, state="posted", company_id?)`
 
 Aggregate debit/credit per account across multiple accounts in a period.
 
