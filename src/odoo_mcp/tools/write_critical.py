@@ -92,30 +92,60 @@ def _replay_response(prior: dict[str, Any], **extra: Any) -> dict[str, Any]:
     }
 
 
-def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
-    """Compact summary used for both preview (dry-run) and post-result."""
+def _summarize_move(client: Any, move_id: int, with_lines: bool = True) -> dict[str, Any]:
+    """Summary used for both preview (dry-run) and post-result.
+
+    A preview that only counted the lines was not a review: an entry can balance
+    perfectly with debit and credit on the wrong accounts. So the journal and
+    every line (account, label, debit, credit, partner) are part of it.
+    """
     moves = client.execute_kw(
         "account.move", "read", [int(move_id)],
         {"fields": ["id", "name", "ref", "date", "state", "move_type",
                     "amount_total", "amount_residual", "currency_id",
-                    "partner_id", "line_ids", "company_id"]},
+                    "partner_id", "line_ids", "company_id", "journal_id"]},
     )
     if not moves:
         raise ValidationError(f"Move {move_id} not found")
     move = moves[0]
-    line_count = len(move.get("line_ids") or [])
-    return {
+    line_ids = move.get("line_ids") or []
+    summary: dict[str, Any] = {
         "move_id": int(move["id"]),
         "company_id": int(move["company_id"][0]) if move.get("company_id") else None,
         "company": move["company_id"][1] if move.get("company_id") else None,
+        "journal_id": int(move["journal_id"][0]) if move.get("journal_id") else None,
+        "journal": move["journal_id"][1] if move.get("journal_id") else None,
         "name": move.get("name"),
         "ref": move.get("ref"),
         "date": move.get("date"),
         "state": move.get("state"),
         "move_type": move.get("move_type"),
+        "partner": move["partner_id"][1] if move.get("partner_id") else None,
         "amount_total": move.get("amount_total"),
-        "line_count": line_count,
+        "amount_residual": move.get("amount_residual"),
+        "currency": move["currency_id"][1] if move.get("currency_id") else None,
+        "line_count": len(line_ids),
     }
+    if with_lines and line_ids:
+        lines = client.execute_kw(
+            "account.move.line", "read", [line_ids],
+            {"fields": ["account_id", "name", "debit", "credit", "partner_id", "display_type"]},
+        )
+        summary["lines"] = [
+            {
+                "account": ln["account_id"][1] if ln.get("account_id") else None,
+                "label": ln.get("name"),
+                "debit": ln.get("debit", 0.0),
+                "credit": ln.get("credit", 0.0),
+                "partner": ln["partner_id"][1] if ln.get("partner_id") else None,
+            }
+            for ln in lines
+            if ln.get("display_type") in (None, False, "product", "payment_term", "tax", "rounding")
+            or ln.get("account_id")
+        ]
+        summary["debit_total"] = round(sum(ln["debit"] for ln in summary["lines"]), 2)
+        summary["credit_total"] = round(sum(ln["credit"] for ln in summary["lines"]), 2)
+    return summary
 
 
 @mcp.tool()

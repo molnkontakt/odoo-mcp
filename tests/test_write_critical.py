@@ -433,3 +433,28 @@ class TestReverseMove:
         )
         assert result["replayed"] is True
         assert result["previous_summary"] == "reversed move 100 (cached)"
+
+
+def test_preview_includes_journal_and_lines(monkeypatch):
+    """A dry-run must be reviewable on its own: journal, company and every line."""
+    from unittest.mock import MagicMock
+
+    from odoo_mcp.tools import write_critical as wc
+
+    client = MagicMock()
+
+    def ex(model, method, args, kwargs=None):
+        if model == "account.move" and method == "read":
+            return [{"id": 433, "name": "/", "ref": "MCP-post-test", "date": "2026-09-16", "state": "draft", "move_type": "entry",
+                     "amount_total": 1.0, "amount_residual": 0.0, "currency_id": [18, "SEK"], "partner_id": False,
+                     "line_ids": [1, 2], "company_id": [2, "Lugnets Tomtägarförening"], "journal_id": [15, "Diverse operationer"]}]
+        if model == "account.move.line" and method == "read":
+            return [{"account_id": [1, "1930 Bank"], "name": "t", "debit": 1.0, "credit": 0.0, "partner_id": False, "display_type": False},
+                    {"account_id": [2, "2893 Skuld VF"], "name": "t", "debit": 0.0, "credit": 1.0, "partner_id": False, "display_type": False}]
+        raise AssertionError((model, method))
+
+    client.execute_kw.side_effect = ex
+    s = wc._summarize_move(client, 433)
+    assert s["journal"] == "Diverse operationer" and s["company"] == "Lugnets Tomtägarförening"
+    assert [ln["account"] for ln in s["lines"]] == ["1930 Bank", "2893 Skuld VF"]
+    assert s["debit_total"] == s["credit_total"] == 1.0
