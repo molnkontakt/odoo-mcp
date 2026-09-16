@@ -159,7 +159,7 @@ Thin lookups for picking the right code/id when building entries/invoices:
 | `odoo_unreconciled_bank_lines(instance, company_id?, journal_code?, date_from?, limit=200)` | bank statement lines still unreconciled, net per journal |
 | `odoo_customer_statement(instance, partner_id, company_id?, include_paid=False, limit=100)` | one customer's invoices/credit notes and balance due |
 | `odoo_list_attachments(res_model, res_id)` | files on an accounting/expense record: `attachment_id, name, mimetype, file_size, viewable` (no content) |
-| `odoo_get_attachment_image(attachment_id, page=1, max_px=1600, company_id?)` | one attachment as an inline image: images downscaled to JPEG, PDFs rendered one page per call as PNG; only image/PDF on account.*/hr.expense*/product.*/res.partner. Needs the `images` extra (Pillow, PyMuPDF) |
+| `odoo_get_attachment_image(attachment_id, page=1, max_px=1600, company_id?)` | one attachment as an inline image: images downscaled to JPEG, PDFs rendered one page per call as PNG; only image/PDF on account.*/hr.expense*/product.*/res.partner. Needs the `images` extra (Pillow, PyMuPDF). Internal users only: Odoo gives portal users no RPC access to `ir.attachment` |
 | `odoo_list_companies(instance)` | companies: `id, name, currency_id` — journals and accounts are per company |
 | `odoo_list_journals(instance, company_id?)` | journals: `id, code, name, type, company_id` |
 | `odoo_list_accounts(instance, query?, account_type?, limit=200, company_id?)` | CoA: `id, code, name, account_type, company_ids` |
