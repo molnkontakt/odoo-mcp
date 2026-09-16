@@ -120,13 +120,15 @@ def odoo_get_attachment_image(
     page: int = 1,
     max_px: int = 1600,
     company_id: int | None = None,
+    include_caption: bool = False,
     instance: Instance | None = None,
 ) -> list[ImageContent | TextContent]:
     """Return one attachment as an inline image (receipt, scanned invoice, PDF page).
 
     Images are downscaled to `max_px` on the long side and re-encoded as JPEG;
-    PDFs are rendered one page per call as PNG (`page` is 1-based; the text part
-    of the result tells how many pages there are). Only image/* and PDF
+    PDFs are rendered one page per call as PNG (`page` is 1-based; the block's
+    `_meta.pages` — or the caption with `include_caption=True` — tells how many
+    pages there are). Only image/* and PDF
     attachments on accounting/expense records are served; the caller's Odoo
     rights decide whether the record is visible at all.
 
@@ -135,6 +137,8 @@ def odoo_get_attachment_image(
         page: PDF page to render (default 1)
         max_px: long-side limit in pixels (200–2400, default 1600)
         company_id: optional company scope
+        include_caption: also return the caption as a text block (default False: image only,
+            which is what most clients need to render the picture inline)
         instance: instance name; may be omitted when only one is configured
     """
     client = get_client(instance)
@@ -157,13 +161,23 @@ def odoo_get_attachment_image(
     if not raw:
         raise ValueError(f"Attachment {attachment_id} has no content stored in Odoo.")
     px = _clamp_px(max_px)
+    pages = 1
     if mt in PDF_TYPES:
         data, fmt, pages = _render_pdf_page(raw, int(page), px)
         caption = f"{att['name']} — page {int(page)} of {pages} (attachment {attachment_id}, {att['res_model']} {att['res_id']})"
     else:
         data, fmt = _render_raster(raw, px)
         caption = f"{att['name']} (attachment {attachment_id}, {att['res_model']} {att['res_id']})"
-    return [
-        ImageContent(type="image", data=base64.b64encode(data).decode("ascii"), mimeType=f"image/{fmt}"),
-        TextContent(type="text", text=caption),
-    ]
+    # A single image block: clients render an image-only result inline, but several
+    # (Claude Desktop among them) fall back to the text view as soon as a text block
+    # sits next to it, leaving the picture visible only to the model. The caption
+    # therefore travels in the block's metadata, and `include_caption=True` adds it
+    # as a separate text block for clients that prefer that.
+    image = ImageContent(
+        type="image", data=base64.b64encode(data).decode("ascii"), mimeType=f"image/{fmt}",
+        _meta={"caption": caption, "attachment_id": int(attachment_id), "page": int(page) if mt in PDF_TYPES else None,
+               "pages": pages if mt in PDF_TYPES else 1, "res_model": att["res_model"], "res_id": att["res_id"]},
+    )
+    if include_caption:
+        return [image, TextContent(type="text", text=caption)]
+    return [image]

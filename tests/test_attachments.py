@@ -50,8 +50,10 @@ def test_list_attachments_flags_viewable_and_refuses_other_models(client):
 
 def test_image_is_downscaled_and_jpeg(client):
     client.execute_kw.return_value = _row(_png(4000, 1000), "image/png")
-    img, txt = att.odoo_get_attachment_image(attachment_id=9, max_px=800, instance="dev")
-    assert img.mimeType == "image/jpeg" and "kvitto" in txt.text
+    (img,) = att.odoo_get_attachment_image(attachment_id=9, max_px=800, instance="dev")
+    assert img.mimeType == "image/jpeg" and "kvitto" in img.meta["caption"]
+    img2, txt = att.odoo_get_attachment_image(attachment_id=9, max_px=800, include_caption=True, instance="dev")
+    assert "kvitto" in txt.text
     from PIL import Image
     with Image.open(io.BytesIO(base64.b64decode(img.data))) as im:
         assert max(im.size) == 800
@@ -60,8 +62,8 @@ def test_image_is_downscaled_and_jpeg(client):
 
 def test_pdf_pages_render_and_range_checked(client):
     client.execute_kw.return_value = _row(_pdf(3), "application/pdf", name="faktura.pdf")
-    img, txt = att.odoo_get_attachment_image(attachment_id=9, page=2, max_px=600, instance="dev")
-    assert img.mimeType == "image/png" and "page 2 of 3" in txt.text
+    (img,) = att.odoo_get_attachment_image(attachment_id=9, page=2, max_px=600, instance="dev")
+    assert img.mimeType == "image/png" and img.meta["page"] == 2 and img.meta["pages"] == 3
     with pytest.raises(ValueError, match="out of range"):
         att.odoo_get_attachment_image(attachment_id=9, page=4, instance="dev")
 
