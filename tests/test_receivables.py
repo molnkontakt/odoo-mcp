@@ -24,7 +24,7 @@ def _route(fields_present, rows):
         if method == "search_read":
             return rows
         if method == "read":
-            return [{"id": 7, "name": "Hildurs väg 02", "email": "hv2@example", "phone": False}]
+            return [{"id": 7, "name": "Example Street 2", "email": "hv2@example", "phone": False}]
         raise AssertionError((model, method))
     return execute_kw
 
@@ -32,7 +32,7 @@ def _route(fields_present, rows):
 def test_overdue_invoices_days_and_reminder_fields(fake_client):
     fake_client.execute_kw.side_effect = _route(
         {"reminder_level_id", "reminder_date", "reminder_count", "reminder_next_level_id"},
-        [{"id": 1, "name": "TF/2026/0001", "ref": "x", "partner_id": [7, "Hildurs väg 02"], "company_id": [2, "TF"],
+        [{"id": 1, "name": "INV/2026/0001", "ref": "x", "partner_id": [7, "Example Street 2"], "company_id": [2, "Example Co"],
           "invoice_date": "2026-09-11", "invoice_date_due": "2026-10-11", "amount_total": 1000.0, "amount_residual": 1000.0,
           "currency_id": [18, "SEK"], "reminder_level_id": False, "reminder_date": False, "reminder_count": 0,
           "reminder_next_level_id": [1, "Påminnelse"]}],
@@ -68,9 +68,9 @@ def test_unpaid_by_customer_groups_and_sorts(fake_client, monkeypatch):
     monkeypatch.setattr(receivables, "date", type("D", (), {"today": staticmethod(lambda: date(2026, 10, 20)),
                                                             "fromisoformat": staticmethod(date.fromisoformat)}))
     fake_client.execute_kw.side_effect = _route(set(), [
-        {"id": 1, "name": "TF/1", "partner_id": [7, "Zeta"], "invoice_date_due": "2026-11-01", "amount_residual": 100.0, "company_id": [2, "TF"]},
-        {"id": 2, "name": "TF/2", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-11", "amount_residual": 50.0, "company_id": [2, "TF"]},
-        {"id": 3, "name": "TF/3", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-15", "amount_residual": 25.0, "company_id": [2, "TF"]},
+        {"id": 1, "name": "INV/1", "partner_id": [7, "Zeta"], "invoice_date_due": "2026-11-01", "amount_residual": 100.0, "company_id": [2, "Example Co"]},
+        {"id": 2, "name": "INV/2", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-11", "amount_residual": 50.0, "company_id": [2, "Example Co"]},
+        {"id": 3, "name": "INV/3", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-15", "amount_residual": 25.0, "company_id": [2, "Example Co"]},
     ])
     res = receivables.odoo_unpaid_by_customer(instance="dev")
     assert res["customers"] == 2 and res["invoices"] == 3 and res["total_residual"] == 175.0
@@ -82,8 +82,8 @@ def test_unpaid_by_customer_groups_and_sorts(fake_client, monkeypatch):
 
 def test_unreconciled_bank_lines_net_by_journal(fake_client):
     fake_client.execute_kw.side_effect = _route(set(), [
-        {"id": 1, "date": "2026-09-01", "payment_ref": "Swish", "amount": 300.0, "partner_id": False, "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "TF"]},
-        {"id": 2, "date": "2026-09-02", "payment_ref": "Bg", "amount": -50.0, "partner_id": [3, "P"], "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "TF"]},
+        {"id": 1, "date": "2026-09-01", "payment_ref": "Swish", "amount": 300.0, "partner_id": False, "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "Example Co"]},
+        {"id": 2, "date": "2026-09-02", "payment_ref": "Bg", "amount": -50.0, "partner_id": [3, "P"], "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "Example Co"]},
     ])
     res = receivables.odoo_unreconciled_bank_lines(instance="dev", journal_code="BNK1")
     assert res["count"] == 2 and res["net_by_journal"] == {"Swedbank": 250.0}
@@ -93,12 +93,12 @@ def test_unreconciled_bank_lines_net_by_journal(fake_client):
 
 def test_customer_statement_signs_refunds(fake_client):
     fake_client.execute_kw.side_effect = _route(set(), [
-        {"id": 1, "name": "TF/1", "ref": None, "move_type": "out_invoice", "invoice_date": "2026-09-01", "invoice_date_due": "2026-10-01",
-         "amount_total": 1000.0, "amount_residual": 1000.0, "payment_state": "not_paid", "company_id": [2, "TF"]},
-        {"id": 2, "name": "TFK/1", "ref": None, "move_type": "out_refund", "invoice_date": "2026-09-02", "invoice_date_due": "2026-09-02",
-         "amount_total": 300.0, "amount_residual": 300.0, "payment_state": "not_paid", "company_id": [2, "TF"]},
+        {"id": 1, "name": "INV/1", "ref": None, "move_type": "out_invoice", "invoice_date": "2026-09-01", "invoice_date_due": "2026-10-01",
+         "amount_total": 1000.0, "amount_residual": 1000.0, "payment_state": "not_paid", "company_id": [2, "Example Co"]},
+        {"id": 2, "name": "RINV/1", "ref": None, "move_type": "out_refund", "invoice_date": "2026-09-02", "invoice_date_due": "2026-09-02",
+         "amount_total": 300.0, "amount_residual": 300.0, "payment_state": "not_paid", "company_id": [2, "Example Co"]},
     ])
     res = receivables.odoo_customer_statement(instance="dev", partner_id=7)
-    assert res["partner"]["name"] == "Hildurs väg 02"
+    assert res["partner"]["name"] == "Example Street 2"
     assert [d["amount_residual"] for d in res["documents"]] == [1000.0, -300.0]
     assert res["balance_due"] == 700.0

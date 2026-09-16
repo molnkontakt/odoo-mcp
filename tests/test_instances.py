@@ -18,19 +18,19 @@ def _reload(monkeypatch, env: dict[str, str]):
 
 
 def test_discovers_and_orders_instances(monkeypatch):
-    inst = _reload(monkeypatch, {"ODOO_LUGNET_URL": "x", "ODOO_DEV_URL": "y", "ODOO_PROD_URL": "z"})
-    assert inst.available_instances() == ("prod", "dev", "lugnet")
+    inst = _reload(monkeypatch, {"ODOO_ACME_URL": "x", "ODOO_DEV_URL": "y", "ODOO_PROD_URL": "z"})
+    assert inst.available_instances() == ("prod", "dev", "acme")
     assert inst.default_instance() is None
     with pytest.raises(ValueError, match="Several instances"):
         inst.resolve_instance(None)
-    assert inst.resolve_instance("lugnet") == "lugnet"
+    assert inst.resolve_instance("acme") == "acme"
 
 
 def test_single_instance_is_default_and_production_flag(monkeypatch):
-    inst = _reload(monkeypatch, {"ODOO_LUGNET_URL": "x", "ODOO_LUGNET_PRODUCTION": "1"})
-    assert inst.available_instances() == ("lugnet",)
-    assert inst.resolve_instance(None) == "lugnet"
-    assert inst.is_production("lugnet") is True
+    inst = _reload(monkeypatch, {"ODOO_ACME_URL": "x", "ODOO_ACME_PRODUCTION": "1"})
+    assert inst.available_instances() == ("acme",)
+    assert inst.resolve_instance(None) == "acme"
+    assert inst.is_production("acme") is True
     assert inst.is_production("dev") is False
     assert inst.is_production("prod") is True
 

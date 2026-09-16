@@ -2,7 +2,7 @@
 
 Instances are discovered from the environment at start-up: every
 ``ODOO_<NAME>_URL`` defines an instance ``<name>`` (lower-cased), e.g.
-``ODOO_PROD_URL`` / ``ODOO_DEV_URL`` / ``ODOO_LUGNET_URL``. Credentials come from
+``ODOO_PROD_URL`` / ``ODOO_DEV_URL`` / ``ODOO_ACME_URL``. Credentials come from
 environment variables, typically populated by a secret-manager (Phase, Vault,
 AWS SSM, etc.) or a `.env` file (gitignored).
 
