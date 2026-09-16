@@ -24,7 +24,7 @@ from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call, find_previous_success, fingerprint_params
 from odoo_mcp.auth import SCOPE_CRITICAL, requires_scope
 from odoo_mcp.client import get_client
-from odoo_mcp.instances import Instance
+from odoo_mcp.instances import Instance, resolve_instance
 from odoo_mcp.validators import (
     MovePostPayload,
     ValidationError,
@@ -185,6 +185,7 @@ def odoo_post_journal_entry(
         ValidationError if any post-time validator rejects the move
         (state != draft, unbalanced, etc.).
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     # Idempotency short-circuit (only meaningful for confirm=True). Scoped to
@@ -288,6 +289,7 @@ def odoo_register_payment(
         - confirm=False: `{preview: True, ...invoice_summary, journal_id, amount}`
         - confirm=True: `{registered: True, payment_move_ids, ...}`
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     # Replay check before any Odoo call — the fingerprint covers the caller's
@@ -504,6 +506,7 @@ def odoo_reverse_move(
         ValidationError if the original move is not in `posted` state, or if it
         is already reversed and allow_additional_reversal is False.
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     request_params = {

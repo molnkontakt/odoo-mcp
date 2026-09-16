@@ -39,3 +39,16 @@ def test_falls_back_to_prod_dev_when_nothing_configured(monkeypatch):
     inst = _reload(monkeypatch, {})
     assert inst.available_instances() == ("prod", "dev")
     _reload(monkeypatch, {"ODOO_DEV_URL": "y"})  # leave a sane module state for other tests
+
+
+def test_critical_audit_refuses_null_instance(monkeypatch):
+    """(instance, tool, key) is the idempotency index; NULL never equals NULL, so a
+    critical row without an instance would silently disable replay protection."""
+    import pytest
+
+    from odoo_mcp import audit
+
+    monkeypatch.setenv("MCP_AUDIT_DB_URL", "postgresql://x")
+    with pytest.raises(audit.AuditUnavailable, match="resolved instance"):
+        with audit.audit_call(tool="odoo_post_journal_entry", instance=None, params={}, critical=True):
+            pass

@@ -459,6 +459,10 @@ def audit_call(
     log = get_logger()
     best_effort = not critical or allow_unaudited_critical_writes()
 
+    if critical and not instance:
+        # The unique index that makes idempotency real is on (instance, tool, key); a NULL
+        # instance never matches itself, so a critical write must carry a resolved name.
+        raise AuditUnavailable("critical writes need a resolved instance name for the audit row")
     identity = current_identity()
     ctx = _Ctx()
     ctx.row_id = log.claim(

@@ -13,7 +13,7 @@ from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
 from odoo_mcp.auth import SCOPE_WRITE, requires_scope
 from odoo_mcp.client import get_client
-from odoo_mcp.instances import Instance
+from odoo_mcp.instances import Instance, resolve_instance
 from odoo_mcp.validators import (
     InvoiceLinePayload,
     InvoicePayload,
@@ -191,6 +191,7 @@ def odoo_create_journal_entry_draft(
         lines=line_payloads,
     )
 
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     audit_params = {
@@ -278,6 +279,7 @@ def odoo_add_tax_tags(
     Returns:
         {line_id, applied_tags}
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     with audit_call(
@@ -327,6 +329,7 @@ def odoo_set_partner(
         move_id: account.move ID
         partner_id: res.partner ID
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
 
     with audit_call(
@@ -431,6 +434,7 @@ def odoo_create_invoice(
         journal_code=journal_code,
     )
 
+    instance = resolve_instance(instance)
     client = get_client(instance)
     audit_params = {
         "move_type": move_type,
@@ -541,6 +545,7 @@ def odoo_update_invoice(
             f"Allowed: {', '.join(sorted(_INVOICE_UPDATABLE_FIELDS))}."
         )
 
+    instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
         tool="odoo_update_invoice", instance=instance,
@@ -601,6 +606,7 @@ def odoo_create_partner(
     Returns:
         {partner_id, name}
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
         tool="odoo_create_partner", instance=instance,
@@ -657,6 +663,7 @@ def odoo_create_product(
     Returns:
         {product_id, name}
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
         tool="odoo_create_product", instance=instance,
@@ -701,6 +708,7 @@ def odoo_upload_attachment(
     Returns:
         {attachment_id, name, res_model, res_id}
     """
+    instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
         tool="odoo_upload_attachment", instance=instance,
