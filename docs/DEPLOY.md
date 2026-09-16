@@ -311,6 +311,10 @@ No extra dependencies: `authlib` (JWT/JWKS) and `uvicorn` ship with `fastmcp`.
 > The store is encrypted with a key derived from the upstream client secret, so
 > rotating that secret invalidates it (clients simply re-register).
 
+The HTTP transport runs **stateless** (`MCP_HTTP_STATELESS=1`, the default): a restart
+never invalidates a client's MCP session, so deploys do not surface as opaque tool errors.
+Set it to `0` only if you need server-initiated notifications.
+
 The OAuth endpoints are rate-limited per client IP (`MCP_RATELIMIT_PER_MINUTE`,
 default 30 on `/register`, `/token`, `/authorize`). Behind a reverse proxy set
 `MCP_TRUST_FORWARDED_FOR=1` so the limit keys on the real client, not the proxy.

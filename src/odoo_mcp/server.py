@@ -83,9 +83,17 @@ def main() -> None:
 
     # Built via http_app() rather than mcp.run(): that is where middleware attaches.
     # The rate limiter guards the OAuth endpoints (/register, /token, /authorize).
+    #
+    # Stateless by default: every tool call carries its own auth and needs no
+    # server-side session, and with sessions a restart makes the client's
+    # session id unknown -> "400 Bad Request" surfaced by clients as an opaque
+    # "error during tool execution" until they reconnect. MCP_HTTP_STATELESS=0
+    # restores sessions (needed only for server-initiated notifications).
+    stateless = os.environ.get("MCP_HTTP_STATELESS", "1").strip().lower() not in ("0", "false", "no")
     app = mcp.http_app(
         path=os.environ.get("MCP_HTTP_PATH", DEFAULT_PATH),
         middleware=[Middleware(RateLimitMiddleware)],
+        stateless_http=stateless,
     )
     uvicorn.run(
         app,
