@@ -39,5 +39,5 @@ class McpGateway(models.AbstractModel):
         context.setdefault("allowed_company_ids", user.company_ids.ids)
         kwargs["context"] = context
         env = self.env(user=user.id, context=context)
-        _logger.info("mcp.gateway: %s (service %s) → %s.%s", login, self.env.user.login, model, method)
+        _logger.debug("mcp.gateway: %s (service %s) → %s.%s", login, self.env.user.login, model, method)
         return call_kw(env[model], method, list(args or []), kwargs)

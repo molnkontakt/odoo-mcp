@@ -296,6 +296,25 @@ MCP_OAUTH_CLIENT_SECRET=...        # keep in a secret manager, never in the unit
 
 No extra dependencies: `authlib` (JWT/JWKS) and `uvicorn` ship with `fastmcp`.
 
+> [!important] Give the OAuth proxy a persistent home
+> In `oauth-proxy` mode FastMCP keeps client registrations, codes and refresh
+> tokens in an encrypted file store under `$FASTMCP_HOME` (default
+> `~/.local/share/fastmcp`). With a sandboxed unit (`HOME=/tmp`, `PrivateTmp`)
+> that store vanishes on every restart and every connected client gets 401 on
+> `/token` until it re-registers. Add to the unit:
+>
+> ```ini
+> StateDirectory=odoo-mcp
+> Environment=FASTMCP_HOME=/var/lib/odoo-mcp/fastmcp
+> ```
+>
+> The store is encrypted with a key derived from the upstream client secret, so
+> rotating that secret invalidates it (clients simply re-register).
+
+The OAuth endpoints are rate-limited per client IP (`MCP_RATELIMIT_PER_MINUTE`,
+default 30 on `/register`, `/token`, `/authorize`). Behind a reverse proxy set
+`MCP_TRUST_FORWARDED_FOR=1` so the limit keys on the real client, not the proxy.
+
 Bind to loopback and terminate TLS in front of the process — the server speaks
 plain HTTP and trusts nothing about the network it sits on. Reuse the systemd
 unit in section 2 as-is; only the environment file changes.
