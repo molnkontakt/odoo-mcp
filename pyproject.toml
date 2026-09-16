@@ -20,9 +20,9 @@ dependencies = [
     # (RemoteAuthProvider, OAuthProxy, JWTVerifier) is written and tested
     # against 3.x. A fresh deploy would otherwise silently install a major it
     # has never run on. Lift it after testing against 4.x.
-    "fastmcp>=3.2.4,<4",
+    "fastmcp>=3.3.1,<4",
     "psycopg2-binary>=2.9.12",
-    "pydantic>=2.0",
+    "pydantic>=2.13.4",
 ]
 
 [project.optional-dependencies]
@@ -34,10 +34,10 @@ images = [
     "pymupdf>=1.24",
 ]
 dev = [
-    "pytest>=8",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
-    "ruff>=0.15.12",
-    "mypy>=2.0.0",
+    "ruff>=0.15.13",
+    "mypy>=2.1.0",
     "Pillow>=10",
     "pymupdf>=1.24",
 ]
