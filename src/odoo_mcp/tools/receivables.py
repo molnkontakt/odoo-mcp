@@ -38,12 +38,12 @@ def _m2o(value: Any) -> dict[str, Any] | None:
 @mcp.tool()
 @requires_scope(SCOPE_READ)
 def odoo_overdue_invoices(
-    instance: Instance,
     company_id: int | None = None,
     as_of: str | None = None,
     min_days_overdue: int = 0,
     partner_id: int | None = None,
     limit: int = 200,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Posted customer invoices past their due date that still have a balance.
 
@@ -52,7 +52,7 @@ def odoo_overdue_invoices(
     level that would apply today. Sorted oldest due date first.
 
     Args:
-        instance: instance name
+        instance: instance name; may be omitted when only one is configured
         company_id: restrict to one company (see `odoo_list_companies`)
         as_of: reference date YYYY-MM-DD (default: today)
         min_days_overdue: skip invoices overdue fewer days than this
@@ -101,10 +101,10 @@ def odoo_overdue_invoices(
 @mcp.tool()
 @requires_scope(SCOPE_READ)
 def odoo_unpaid_by_customer(
-    instance: Instance,
     company_id: int | None = None,
     include_not_due: bool = True,
     limit: int = 500,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Open customer balances grouped per customer: who owes what.
 
@@ -113,7 +113,7 @@ def odoo_unpaid_by_customer(
     annual fee" without the caller building domains.
 
     Args:
-        instance: instance name
+        instance: instance name; may be omitted when only one is configured
         company_id: restrict to one company
         include_not_due: also list invoices that are open but not yet due (default True)
         limit: max invoices scanned (default 500)
@@ -147,11 +147,11 @@ def odoo_unpaid_by_customer(
 @mcp.tool()
 @requires_scope(SCOPE_READ)
 def odoo_unreconciled_bank_lines(
-    instance: Instance,
     company_id: int | None = None,
     journal_code: str | None = None,
     date_from: str | None = None,
     limit: int = 200,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Bank statement lines that are not reconciled yet, oldest first.
 
@@ -159,7 +159,7 @@ def odoo_unreconciled_bank_lines(
     the statement it belongs to. This is the "what is left to match" view.
 
     Args:
-        instance: instance name
+        instance: instance name; may be omitted when only one is configured
         company_id: restrict to one company
         journal_code: one bank journal (e.g. "BNK1"); with several companies pass company_id too
         date_from: YYYY-MM-DD, skip older lines
@@ -189,16 +189,16 @@ def odoo_unreconciled_bank_lines(
 @mcp.tool()
 @requires_scope(SCOPE_READ)
 def odoo_customer_statement(
-    instance: Instance,
     partner_id: int,
     company_id: int | None = None,
     include_paid: bool = False,
     limit: int = 100,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """One customer's invoices, credit notes and what remains to pay.
 
     Args:
-        instance: instance name
+        instance: instance name; may be omitted when only one is configured
         partner_id: the customer (commercial partner or contact)
         company_id: restrict to one company
         include_paid: also list settled documents (default False)

@@ -62,6 +62,9 @@ offer, so the server fronts the IdP with a DCR endpoint and runs the real flow
 upstream with its own credentials. `MCP_AUTH_MODE=oauth` is the plain
 resource-server mode for callers that already hold a token.
 
+The OAuth endpoints (`/register`, `/token`, `/authorize`) are rate-limited per client IP
+(`MCP_RATELIMIT_PER_MINUTE`, default 30; `MCP_TRUST_FORWARDED_FOR=1` behind a proxy you control).
+
 The caller's identity from the token is what lands in the audit log; the Odoo
 hop still uses one service account, since Odoo does not accept OIDC tokens over
 XML-RPC. See [docs/DEPLOY.md](docs/DEPLOY.md#4-remote-streamable-http--oauth).

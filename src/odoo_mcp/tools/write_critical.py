@@ -121,10 +121,10 @@ def _summarize_move(client: Any, move_id: int) -> dict[str, Any]:
 @mcp.tool()
 @requires_scope(SCOPE_CRITICAL)
 def odoo_post_journal_entry(
-    instance: Instance,
     move_id: int,
     confirm: bool = False,
     idempotency_key: str | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Promote a draft `account.move` to `posted` state.
 
@@ -139,7 +139,7 @@ def odoo_post_journal_entry(
         4. Re-call with `confirm=True` to actually post.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         move_id: account.move ID to post
         confirm: must be True to actually post; False returns a dry-run
             preview describing what would happen
@@ -232,13 +232,13 @@ def odoo_post_journal_entry(
 @mcp.tool()
 @requires_scope(SCOPE_CRITICAL)
 def odoo_register_payment(
-    instance: Instance,
     move_id: int,
     journal_code: str,
     amount: float,
     payment_date: str | None = None,
     confirm: bool = False,
     idempotency_key: str | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Register a payment against a posted invoice.
 
@@ -246,7 +246,7 @@ def odoo_register_payment(
     created and reconciled with the invoice the same way the UI does it.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         move_id: posted account.move ID (vendor bill or customer invoice)
         journal_code: short code of the bank/cash journal (e.g. "BNK1")
         amount: payment amount in the invoice's currency
@@ -420,7 +420,6 @@ def _reversal_field_names(client: Any) -> set[str]:
 @mcp.tool()
 @requires_scope(SCOPE_CRITICAL)
 def odoo_reverse_move(
-    instance: Instance,
     move_id: int,
     reason: str,
     journal_code: str | None = None,
@@ -428,6 +427,7 @@ def odoo_reverse_move(
     confirm: bool = False,
     idempotency_key: str | None = None,
     allow_additional_reversal: bool = False,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Reverse a posted account.move via Odoo's `account.move.reversal` wizard.
 
@@ -450,7 +450,7 @@ def odoo_reverse_move(
     - Reverse a period-end journal entry that turned out wrong
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         move_id: ID of the posted move to reverse
         reason: short human description; included on the new move's ref
         journal_code: journal short code for the reversal entry; defaults

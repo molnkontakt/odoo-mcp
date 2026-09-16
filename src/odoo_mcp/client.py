@@ -30,7 +30,7 @@ import xmlrpc.client
 from functools import lru_cache
 from typing import Any
 
-from odoo_mcp.instances import Instance, get_config
+from odoo_mcp.instances import Instance, get_config, resolve_instance
 
 #: Socket timeout (seconds) for every XML-RPC call. Without this a hung Odoo
 #: blocks the calling worker thread forever, and the MCP server slowly loses its
@@ -180,11 +180,15 @@ class OdooClient:
         )
 
 
-@lru_cache(maxsize=2)
-def get_client(instance: Instance) -> OdooClient:
-    """Cached client factory — one per instance.
+@lru_cache(maxsize=8)
+def _client_for(instance: str) -> OdooClient:
+    return OdooClient(instance)
+
+
+def get_client(instance: Instance | None) -> OdooClient:
+    """Cached client factory — one per instance; ``None`` means the only configured one.
 
     The client is shared across threads on purpose (it caches the uid); the
     non-thread-safe part, the ServerProxy, is thread-local inside it.
     """
-    return OdooClient(instance)
+    return _client_for(resolve_instance(instance))

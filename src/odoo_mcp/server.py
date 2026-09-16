@@ -76,11 +76,22 @@ def main() -> None:
         return
 
     check_http_is_authenticated()
-    mcp.run(
-        transport="http",
+    import uvicorn
+    from starlette.middleware import Middleware
+
+    from odoo_mcp.ratelimit import RateLimitMiddleware
+
+    # Built via http_app() rather than mcp.run(): that is where middleware attaches.
+    # The rate limiter guards the OAuth endpoints (/register, /token, /authorize).
+    app = mcp.http_app(
+        path=os.environ.get("MCP_HTTP_PATH", DEFAULT_PATH),
+        middleware=[Middleware(RateLimitMiddleware)],
+    )
+    uvicorn.run(
+        app,
         host=os.environ.get("MCP_HTTP_HOST", DEFAULT_HOST),
         port=int(os.environ.get("MCP_HTTP_PORT", DEFAULT_PORT)),
-        path=os.environ.get("MCP_HTTP_PATH", DEFAULT_PATH),
+        log_level="info",
     )
 
 

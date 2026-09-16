@@ -2,6 +2,8 @@
 
 Reference for every MCP tool exposed by `odoo-mcp`.
 
+> `instance` is the last, optional parameter of every tool: it may be omitted when the server has a single configured instance.
+
 ## Common parameters
 
 All tools take `instance: "prod" | "dev"` as the first parameter. The

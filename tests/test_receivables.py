@@ -37,7 +37,7 @@ def test_overdue_invoices_days_and_reminder_fields(fake_client):
           "currency_id": [18, "SEK"], "reminder_level_id": False, "reminder_date": False, "reminder_count": 0,
           "reminder_next_level_id": [1, "Påminnelse"]}],
     )
-    res = receivables.odoo_overdue_invoices("dev", as_of="2026-10-25")
+    res = receivables.odoo_overdue_invoices(instance="dev", as_of="2026-10-25")
     assert res["count"] == 1 and res["total_residual"] == 1000.0
     inv = res["invoices"][0]
     assert inv["days_overdue"] == 14
@@ -49,7 +49,7 @@ def test_overdue_invoices_without_reminder_module(fake_client):
     fake_client.execute_kw.side_effect = _route(set(), [
         {"id": 1, "name": "INV/1", "ref": None, "partner_id": [7, "A"], "company_id": [1, "C"], "invoice_date": "2026-01-01",
          "invoice_date_due": "2026-01-31", "amount_total": 10.0, "amount_residual": 4.0, "currency_id": [1, "SEK"]}])
-    res = receivables.odoo_overdue_invoices("dev", as_of="2026-02-10", min_days_overdue=5)
+    res = receivables.odoo_overdue_invoices(instance="dev", as_of="2026-02-10", min_days_overdue=5)
     assert res["invoices"][0]["days_overdue"] == 10
     assert "last_reminder" not in res["invoices"][0]
     # requested fields must not include the optional ones when absent
@@ -61,7 +61,7 @@ def test_overdue_min_days_filter(fake_client):
     fake_client.execute_kw.side_effect = _route(set(), [
         {"id": 1, "name": "A", "ref": None, "partner_id": [1, "p"], "company_id": [1, "c"], "invoice_date": "2026-01-01",
          "invoice_date_due": "2026-02-08", "amount_total": 1, "amount_residual": 1, "currency_id": [1, "SEK"]}])
-    assert receivables.odoo_overdue_invoices("dev", as_of="2026-02-10", min_days_overdue=5)["count"] == 0
+    assert receivables.odoo_overdue_invoices(instance="dev", as_of="2026-02-10", min_days_overdue=5)["count"] == 0
 
 
 def test_unpaid_by_customer_groups_and_sorts(fake_client, monkeypatch):
@@ -72,7 +72,7 @@ def test_unpaid_by_customer_groups_and_sorts(fake_client, monkeypatch):
         {"id": 2, "name": "TF/2", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-11", "amount_residual": 50.0, "company_id": [2, "TF"]},
         {"id": 3, "name": "TF/3", "partner_id": [8, "Alfa"], "invoice_date_due": "2026-10-15", "amount_residual": 25.0, "company_id": [2, "TF"]},
     ])
-    res = receivables.odoo_unpaid_by_customer("dev")
+    res = receivables.odoo_unpaid_by_customer(instance="dev")
     assert res["customers"] == 2 and res["invoices"] == 3 and res["total_residual"] == 175.0
     first = res["by_customer"][0]
     assert first["partner"]["name"] == "Alfa" and first["overdue"] is True and first["total_residual"] == 75.0
@@ -85,7 +85,7 @@ def test_unreconciled_bank_lines_net_by_journal(fake_client):
         {"id": 1, "date": "2026-09-01", "payment_ref": "Swish", "amount": 300.0, "partner_id": False, "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "TF"]},
         {"id": 2, "date": "2026-09-02", "payment_ref": "Bg", "amount": -50.0, "partner_id": [3, "P"], "journal_id": [18, "Swedbank"], "statement_id": [4, "S"], "company_id": [2, "TF"]},
     ])
-    res = receivables.odoo_unreconciled_bank_lines("dev", journal_code="BNK1")
+    res = receivables.odoo_unreconciled_bank_lines(instance="dev", journal_code="BNK1")
     assert res["count"] == 2 and res["net_by_journal"] == {"Swedbank": 250.0}
     domain = fake_client.execute_kw.call_args[0][2][0]
     assert ("journal_id.code", "=", "BNK1") in domain and ("is_reconciled", "=", False) in domain
@@ -98,7 +98,7 @@ def test_customer_statement_signs_refunds(fake_client):
         {"id": 2, "name": "TFK/1", "ref": None, "move_type": "out_refund", "invoice_date": "2026-09-02", "invoice_date_due": "2026-09-02",
          "amount_total": 300.0, "amount_residual": 300.0, "payment_state": "not_paid", "company_id": [2, "TF"]},
     ])
-    res = receivables.odoo_customer_statement("dev", partner_id=7)
+    res = receivables.odoo_customer_statement(instance="dev", partner_id=7)
     assert res["partner"]["name"] == "Hildurs väg 02"
     assert [d["amount_residual"] for d in res["documents"]] == [1000.0, -300.0]
     assert res["balance_due"] == 700.0

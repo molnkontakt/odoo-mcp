@@ -136,21 +136,21 @@ def _resolve_invoice_tax_ids(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_create_journal_entry_draft(
-    instance: Instance,
     date: str,
     lines: list[dict[str, Any]],
     ref: str | None = None,
     journal_code: str | None = None,
     company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Create an account.move in `draft` state with the given lines.
 
     Lines must balance: sum(debit) == sum(credit). The entry is created as
     a draft so a human can review it before posting (use `odoo_post_journal_entry`
-    in Phase 3 once that tool exists; for now post via the Odoo UI).
+    to post it).
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         date: YYYY-MM-DD
         lines: list of line dicts. Each line:
             account_code: str (required)  — BAS/CoA code
@@ -259,10 +259,10 @@ def odoo_create_journal_entry_draft(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_add_tax_tags(
-    instance: Instance,
     line_id: int,
     tag_codes: list[str],
     replace: bool = False,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Add (or replace) tax tags on a single account.move.line.
 
@@ -270,7 +270,7 @@ def odoo_add_tax_tags(
     posted moves' tax tags as part of audit-trail rules.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         line_id: account.move.line ID
         tag_codes: tag short codes, e.g. ["se_30", "se_48"]
         replace: if True, overwrite existing tags. If False (default), add to existing.
@@ -316,14 +316,14 @@ def odoo_add_tax_tags(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_set_partner(
-    instance: Instance,
     move_id: int,
     partner_id: int,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Set the partner on a draft account.move.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         move_id: account.move ID
         partner_id: res.partner ID
     """
@@ -367,7 +367,6 @@ def odoo_set_partner(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_create_invoice(
-    instance: Instance,
     move_type: str,
     partner_id: int,
     lines: list[dict[str, Any]],
@@ -375,6 +374,7 @@ def odoo_create_invoice(
     ref: str | None = None,
     journal_code: str | None = None,
     company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Create a DRAFT customer/vendor invoice (or refund).
 
@@ -384,7 +384,7 @@ def odoo_create_invoice(
     critical-write tool.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         move_type: "out_invoice" (customer), "in_invoice" (vendor bill),
             "out_refund" (credit note), or "in_refund" (vendor credit).
         partner_id: res.partner ID (customer or vendor).
@@ -519,9 +519,9 @@ _INVOICE_UPDATABLE_FIELDS = {
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_update_invoice(
-    instance: Instance,
     move_id: int,
     values: dict[str, Any],
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Update header fields on a DRAFT invoice/move. Rejected on posted moves.
 
@@ -572,7 +572,6 @@ def odoo_update_invoice(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_create_partner(
-    instance: Instance,
     name: str,
     is_company: bool = True,
     vat: str | None = None,
@@ -584,11 +583,12 @@ def odoo_create_partner(
     country_code: str | None = None,
     customer: bool = False,
     supplier: bool = False,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Create a res.partner (customer/vendor/contact).
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         name: partner name (required)
         is_company: True for an organisation (default), False for an individual
         vat: VAT / org number, e.g. "SE556677889901"
@@ -635,18 +635,18 @@ def odoo_create_partner(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_create_product(
-    instance: Instance,
     name: str,
     list_price: float = 0.0,
     default_code: str | None = None,
     product_type: str = "service",
     sale_ok: bool = True,
     purchase_ok: bool = False,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Create a product.product.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         name: product name (required)
         list_price: sales price (default 0)
         default_code: internal reference / SKU
@@ -679,19 +679,19 @@ def odoo_create_product(
 @mcp.tool()
 @requires_scope(SCOPE_WRITE)
 def odoo_upload_attachment(
-    instance: Instance,
     res_model: str,
     res_id: int,
     filename: str,
     data_base64: str,
     mimetype: str | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Attach a base64-encoded file to any record (e.g. a PDF onto an invoice).
 
     Feeds the OCR/invoice flow: upload a supplier PDF onto the draft bill.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         res_model: model to attach to, e.g. "account.move"
         res_id: record id
         filename: display name, e.g. "invoice_123.pdf"

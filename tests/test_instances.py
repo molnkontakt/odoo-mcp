@@ -1,0 +1,41 @@
+"""Instance discovery and the single-instance default."""
+
+from __future__ import annotations
+
+import importlib
+
+import pytest
+
+
+def _reload(monkeypatch, env: dict[str, str]):
+    for k in list(__import__("os").environ):
+        if k.startswith("ODOO_") and k.endswith("_URL"):
+            monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    import odoo_mcp.instances as inst
+    return importlib.reload(inst)
+
+
+def test_discovers_and_orders_instances(monkeypatch):
+    inst = _reload(monkeypatch, {"ODOO_LUGNET_URL": "x", "ODOO_DEV_URL": "y", "ODOO_PROD_URL": "z"})
+    assert inst.available_instances() == ("prod", "dev", "lugnet")
+    assert inst.default_instance() is None
+    with pytest.raises(ValueError, match="Several instances"):
+        inst.resolve_instance(None)
+    assert inst.resolve_instance("lugnet") == "lugnet"
+
+
+def test_single_instance_is_default_and_production_flag(monkeypatch):
+    inst = _reload(monkeypatch, {"ODOO_LUGNET_URL": "x", "ODOO_LUGNET_PRODUCTION": "1"})
+    assert inst.available_instances() == ("lugnet",)
+    assert inst.resolve_instance(None) == "lugnet"
+    assert inst.is_production("lugnet") is True
+    assert inst.is_production("dev") is False
+    assert inst.is_production("prod") is True
+
+
+def test_falls_back_to_prod_dev_when_nothing_configured(monkeypatch):
+    inst = _reload(monkeypatch, {})
+    assert inst.available_instances() == ("prod", "dev")
+    _reload(monkeypatch, {"ODOO_DEV_URL": "y"})  # leave a sane module state for other tests
