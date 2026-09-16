@@ -109,10 +109,60 @@ double-posting or double-charging.
 
 ### Auth
 
-- Odoo credentials read from environment variables (typically populated by
-  a secret manager such as Phase, Vault, AWS SSM, or a `.env` file locally)
-- Recommendation: use a dedicated non-admin user so Odoo's own permission
-  controls act as an additional safety layer
+There are **two** auth boundaries, and they do not share a credential:
+
+```
+MCP client ──OAuth 2.1 (Authentik)──▶ odoo-mcp ──Odoo API key──▶ Odoo
+           ▲ per-user, per-scope              ▲ one service account
+```
+
+**Client → server.** Only for the HTTP transport. The server is a *resource
+server*: it verifies JWTs against the IdP's JWKS (`auth.py`), advertises RFC
+9728 Protected Resource Metadata, and answers unauthenticated requests with a
+`WWW-Authenticate` challenge carrying `resource_metadata` — the pair that lets
+a web client discover where to log in.
+
+Two modes, because MCP clients expect to self-register:
+
+- `MCP_AUTH_MODE=oauth` — resource server only. The caller already holds a
+  token issued by the IdP.
+- `MCP_AUTH_MODE=oauth-proxy` — additionally fronts the IdP with an RFC 7591
+  Dynamic Client Registration endpoint, since Authentik has none outside its
+  enterprise tier. The proxy performs the upstream flow with this server's own
+  pre-registered credentials, so login and consent remain Authentik's, and
+  client redirect URIs are matched against an allow-list rather than accepted
+  as given. The token handed back is still the IdP's JWT; no new issuer.
+
+The stdio transport has no OAuth: its trust boundary is the local process, and
+`check_scopes` is a no-op there.
+
+**Server → Odoo.** Always an Odoo credential (`instances.py`), because Odoo's
+`auth_oidc` is web-login only — an Authentik access token is not accepted by
+XML-RPC. An Odoo **API key** is a drop-in replacement for the password in
+`common.authenticate` / `execute_kw`, so this hop should use one, on a
+dedicated non-admin user, so Odoo's own ACLs act as a second layer.
+
+Because that account is shared by every caller, Odoo's `create_uid`/`write_uid`
+cannot attribute anything. The `mcp_audit` row is the only attribution, and it
+takes `actor` / `actor_sub` / `client_id` from the verified token — never from
+a tool argument, which would be a caller-supplied audit trail.
+
+#### Scopes
+
+| Scope | Grants | Implies |
+|---|---|---|
+| `odoo:read` | read tier | — |
+| `odoo:write` | write_safe tier | `odoo:read` |
+| `odoo:critical` | write_critical tier | `odoo:write` |
+| `odoo:prod` | `instance="prod"` on any tier | — |
+
+`odoo:prod` sits outside the tier chain on purpose: the tier is *what kind of
+call*, `odoo:prod` is *which ledger*.
+
+Enforcement is a `@requires_scope(...)` decorator applied under `@mcp.tool()`,
+so the check is part of the tool function and also fires when the function is
+called directly. A scope helper with no call sites is decoration, not
+protection.
 
 ## Tool catalog
 

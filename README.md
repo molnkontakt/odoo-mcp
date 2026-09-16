@@ -20,11 +20,19 @@ cd odoo-mcp
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Set credentials in the environment (or a .env file via direnv/dotenv-cli)
+# Set credentials in the environment (or a .env file via direnv/dotenv-cli).
+# Every ODOO_<NAME>_URL defines an instance "<name>" (prod, dev, or anything else);
+# the set is discovered at start-up and exposed as the `instance` enum of every tool.
 export ODOO_DEV_URL=https://odoo-dev.example.com
 export ODOO_DEV_DB=odoo
 export ODOO_DEV_USER=user@example.com
 export ODOO_DEV_PASSWORD=...
+# A third instance, gated like prod (odoo:prod scope over HTTP):
+export ODOO_LUGNET_URL=https://odoo.example.org
+export ODOO_LUGNET_DB=odoo
+export ODOO_LUGNET_USER=...
+export ODOO_LUGNET_PASSWORD=...
+export ODOO_LUGNET_PRODUCTION=1
 
 # Optional — turn on audit logging
 export MCP_AUDIT_DB_URL=postgresql://user:pass@host/dbname
@@ -39,7 +47,27 @@ odoo-mcp
 claude mcp add odoo -- odoo-mcp
 ```
 
-Or expose it over HTTP via a gateway/proxy in production.
+## Remote clients (claude.ai, Claude Desktop)
+
+Set `MCP_TRANSPORT=http` to serve Streamable HTTP instead of stdio, and point
+clients at `https://<host>/mcp`. That transport requires OAuth — token
+verification against your IdP's JWKS, RFC 9728 protected-resource metadata so
+web clients can discover the login, and per-tier scopes (`odoo:read`,
+`odoo:write`, `odoo:critical`, plus `odoo:prod` to touch the production
+ledger). The server refuses to serve HTTP anonymously.
+
+Use `MCP_AUTH_MODE=oauth-proxy` for Claude clients: they self-register through
+Dynamic Client Registration, which most IdPs (Authentik among them) do not
+offer, so the server fronts the IdP with a DCR endpoint and runs the real flow
+upstream with its own credentials. `MCP_AUTH_MODE=oauth` is the plain
+resource-server mode for callers that already hold a token.
+
+The OAuth endpoints (`/register`, `/token`, `/authorize`) are rate-limited per client IP
+(`MCP_RATELIMIT_PER_MINUTE`, default 30; `MCP_TRUST_FORWARDED_FOR=1` behind a proxy you control).
+
+The caller's identity from the token is what lands in the audit log; the Odoo
+hop still uses one service account, since Odoo does not accept OIDC tokens over
+XML-RPC. See [docs/DEPLOY.md](docs/DEPLOY.md#4-remote-streamable-http--oauth).
 
 ## Tools
 

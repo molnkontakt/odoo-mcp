@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="module_category_mcp" model="ir.module.category">
+        <field name="name">MCP gateway</field>
+        <field name="sequence">100</field>
+    </record>
+    <record id="privilege_mcp" model="res.groups.privilege">
+        <field name="name">MCP gateway</field>
+        <field name="category_id" ref="module_category_mcp"/>
+    </record>
+    <!-- Enda gruppen som får anropa mcp.gateway.execute_as. Ge den till tjänstekontot och inget annat:
+         kontot kan då inte läsa eller skriva något själv, bara köra anrop som den inloggade användaren. -->
+    <record id="group_mcp_gateway" model="res.groups">
+        <field name="name">Får byta användare (MCP-tjänstekonto)</field>
+        <field name="privilege_id" ref="privilege_mcp"/>
+    </record>
+</odoo>

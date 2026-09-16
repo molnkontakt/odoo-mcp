@@ -3,14 +3,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "odoo-mcp"
+# NOTE: the distribution is deliberately NOT called "odoo-mcp". That name is
+# taken on PyPI by an unrelated project (erpipe-org/mcp-odoo, currently 1.3.0),
+# and since this is installed editable at version 0.1.0, a stray
+# `pip install --upgrade odoo-mcp` would resolve to 1.3.0 and silently replace
+# this server — third-party code inheriting live Odoo credentials.
+# The console script below stays `odoo-mcp`, so client configs are unaffected.
+name = "molnkontakt-odoo-mcp"
 version = "0.1.0"
 description = "MCP server for Odoo (multi-instance, XML-RPC, with safety controls)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "LGPL-3.0-only"
 dependencies = [
-    "fastmcp>=3.2.4",
+    # Upper bound is deliberate: fastmcp 4.0 is out, and the auth layer here
+    # (RemoteAuthProvider, OAuthProxy, JWTVerifier) is written and tested
+    # against 3.x. A fresh deploy would otherwise silently install a major it
+    # has never run on. Lift it after testing against 4.x.
+    "fastmcp>=3.2.4,<4",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.0",
 ]
@@ -22,6 +32,13 @@ dev = [
     "ruff>=0.15.12",
     "mypy>=2.0.0",
 ]
+
+# The distribution name (molnkontakt-odoo-mcp) does not match the package
+# directory (odoo_mcp), so hatchling cannot guess what to ship — a fresh
+# `pip install .` fails at metadata generation. Editable installs happened to
+# work, which is why this survived until the first real deploy.
+[tool.hatch.build.targets.wheel]
+packages = ["src/odoo_mcp"]
 
 [project.scripts]
 odoo-mcp = "odoo_mcp.server:main"
@@ -41,3 +58,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff.lint.per-file-ignores]
+"addons/**/__init__.py" = ["F401"]
+"addons/**/__manifest__.py" = ["B018"]

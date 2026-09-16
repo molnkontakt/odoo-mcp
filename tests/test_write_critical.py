@@ -18,8 +18,22 @@ from odoo_mcp.validators import ValidationError
 def patched(mock_client, monkeypatch):
     monkeypatch.setattr(client_module, "get_client", lambda inst: mock_client)
     monkeypatch.setattr(write_critical, "get_client", lambda inst: mock_client)
-    # Disable audit DB lookups during tests
+    # No audit DB in unit tests. Critical writes fail closed by default now, so
+    # the opt-out must be explicit here — see test_critical_write_fails_closed
+    # for the un-opted-out behaviour.
     monkeypatch.delenv("MCP_AUDIT_DB_URL", raising=False)
+    monkeypatch.setenv("MCP_ALLOW_UNAUDITED_CRITICAL_WRITES", "1")
+    monkeypatch.setattr(audit, "_logger_instance", None)
+    return mock_client
+
+
+@pytest.fixture
+def patched_no_audit_optout(mock_client, monkeypatch):
+    """Like `patched`, but without the unaudited-write opt-out."""
+    monkeypatch.setattr(client_module, "get_client", lambda inst: mock_client)
+    monkeypatch.setattr(write_critical, "get_client", lambda inst: mock_client)
+    monkeypatch.delenv("MCP_AUDIT_DB_URL", raising=False)
+    monkeypatch.delenv("MCP_ALLOW_UNAUDITED_CRITICAL_WRITES", raising=False)
     monkeypatch.setattr(audit, "_logger_instance", None)
     return mock_client
 
@@ -202,6 +216,44 @@ class TestRegisterPayment:
         assert result["registered"] is True
         assert result["payment_ids"] == [9001]
 
+    def test_omitted_payment_date_books_the_invoice_date_not_today(self, patched):
+        """The preview promises the invoice date; the write must book it.
+
+        account.payment.register defaults payment_date to context_today, so
+        leaving the field out of the wizard vals meant the human approved one
+        accounting date and a different one was booked — the field that decides
+        period and fiscal year.
+        """
+        state = {
+            "account.move": {"read": [_draft_invoice("posted")]},  # date 2026-01-01
+            "account.journal": {
+                "search_read": [{"id": 12, "code": "BNK1", "name": "Bank", "type": "bank"}],
+            },
+            "account.payment.register": {
+                "create": 555,
+                "action_create_payments": {"res_id": 9001},
+            },
+        }
+        patched.state = state
+        preview = write_critical.odoo_register_payment(
+            instance="dev", move_id=100, journal_code="BNK1",
+            amount=494.70, confirm=False,
+        )
+        assert preview["payment_date"] == "2026-01-01"
+
+        patched.calls.clear()
+        write_critical.odoo_register_payment(
+            instance="dev", move_id=100, journal_code="BNK1",
+            amount=494.70, confirm=True,
+        )
+        create_calls = [
+            c for c in patched.calls
+            if c[0] == "account.payment.register" and c[1] == "create"
+        ]
+        assert len(create_calls) == 1
+        wizard_vals = create_calls[0][2][0]
+        assert wizard_vals["payment_date"] == preview["payment_date"]
+
     def test_rejects_payment_on_draft_invoice(self, patched):
         patched.state = {
             "account.move": {"read": [_draft_invoice("draft")]},
@@ -255,7 +307,10 @@ class TestReverseMove:
             reason="Reverse test", confirm=False,
         )
         assert result["preview"] is True
-        assert result["validators_passed"] is True
+        # No validator runs for reversals, so the key must be absent rather
+        # than a hardcoded True borrowing meaning from post_journal_entry.
+        assert "validators_passed" not in result
+        assert result["existing_reversals"] == []
         assert result["original"]["move_id"] == 100
         assert result["reason"] == "Reverse test"
         # No reversal call when previewing
@@ -311,6 +366,54 @@ class TestReverseMove:
                 reason="x", confirm=False,
             )
 
+    def test_draft_reversal_is_not_reported_as_reversed(self, patched):
+        """Odoo only auto-posts reversals of manual entries.
+
+        For an invoice/bill the credit note lands in draft and the original
+        stays open. Reporting reversed=True there tells the caller a
+        correction landed when the ledger is unchanged.
+        """
+        patched.state = self._state_for_reverse()
+        original = {**_draft_invoice("posted"), "journal_id": [9, "Misc"]}
+        draft_reversal = {
+            **_draft_invoice("draft"),
+            "id": 3966,
+            "name": "/",
+            "journal_id": [9, "Misc"],
+        }
+        moves_iter = iter([[original], [original], [draft_reversal]])
+        patched.state["account.move"]["read"] = lambda args, kwargs: next(moves_iter)
+        patched.state["account.move.reversal"]["read"] = [{"new_move_ids": [3966]}]
+
+        result = write_critical.odoo_reverse_move(
+            instance="dev", move_id=100,
+            reason="Reverse an invoice", confirm=True,
+        )
+        assert result["reversed"] is False
+        assert result["reversal_state"] == [
+            {"move_id": 3966, "name": "/", "state": "draft"}
+        ]
+        assert "3966" in result["next_step"]
+
+    def test_blocks_second_reversal_unless_opted_in(self, patched):
+        patched.state = self._state_for_reverse()
+        patched.state["account.move"]["search_read"] = [
+            {"id": 3965, "name": "MISC/2026/0091", "state": "posted"}
+        ]
+        with pytest.raises(ValidationError, match="already reversed"):
+            write_critical.odoo_reverse_move(
+                instance="dev", move_id=100,
+                reason="Reverse again", confirm=False,
+            )
+
+        # Opting in surfaces the existing reversal instead of blocking.
+        result = write_critical.odoo_reverse_move(
+            instance="dev", move_id=100, reason="Reverse again",
+            confirm=False, allow_additional_reversal=True,
+        )
+        assert result["preview"] is True
+        assert result["existing_reversals"][0]["move_id"] == 3965
+
     def test_idempotency_replay(self, patched, monkeypatch):
         prior = {
             "id": 7,
@@ -330,3 +433,28 @@ class TestReverseMove:
         )
         assert result["replayed"] is True
         assert result["previous_summary"] == "reversed move 100 (cached)"
+
+
+def test_preview_includes_journal_and_lines(monkeypatch):
+    """A dry-run must be reviewable on its own: journal, company and every line."""
+    from unittest.mock import MagicMock
+
+    from odoo_mcp.tools import write_critical as wc
+
+    client = MagicMock()
+
+    def ex(model, method, args, kwargs=None):
+        if model == "account.move" and method == "read":
+            return [{"id": 433, "name": "/", "ref": "MCP-post-test", "date": "2026-09-16", "state": "draft", "move_type": "entry",
+                     "amount_total": 1.0, "amount_residual": 0.0, "currency_id": [18, "SEK"], "partner_id": False,
+                     "line_ids": [1, 2], "company_id": [2, "Lugnets Tomtägarförening"], "journal_id": [15, "Diverse operationer"]}]
+        if model == "account.move.line" and method == "read":
+            return [{"account_id": [1, "1930 Bank"], "name": "t", "debit": 1.0, "credit": 0.0, "partner_id": False, "display_type": False},
+                    {"account_id": [2, "2893 Skuld VF"], "name": "t", "debit": 0.0, "credit": 1.0, "partner_id": False, "display_type": False}]
+        raise AssertionError((model, method))
+
+    client.execute_kw.side_effect = ex
+    s = wc._summarize_move(client, 433)
+    assert s["journal"] == "Diverse operationer" and s["company"] == "Lugnets Tomtägarförening"
+    assert [ln["account"] for ln in s["lines"]] == ["1930 Bank", "2893 Skuld VF"]
+    assert s["debit_total"] == s["credit_total"] == 1.0

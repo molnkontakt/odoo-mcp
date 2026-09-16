@@ -2,8 +2,10 @@
 
 from typing import Any
 
+from odoo_mcp.access import DENIED_FIELDS, check_fields, check_model, scrub_rows
 from odoo_mcp.app import mcp
-from odoo_mcp.client import get_client
+from odoo_mcp.auth import SCOPE_READ, requires_scope
+from odoo_mcp.client import enter_company_scope, get_client
 from odoo_mcp.instances import Instance
 
 
@@ -35,15 +37,16 @@ def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> N
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_partners(
-    instance: Instance,
     query: str,
     limit: int = 20,
+    instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Search res.partner by name or VAT (case-insensitive ilike).
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         query: substring match against name OR vat
         limit: max results (default 20)
 
@@ -62,11 +65,12 @@ def odoo_search_partners(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_partner(instance: Instance, partner_id: int) -> dict[str, Any]:
     """Get full info for a single res.partner.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         partner_id: res.partner ID
 
     Returns:
@@ -87,27 +91,31 @@ def odoo_get_partner(instance: Instance, partner_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_invoices(
-    instance: Instance,
     date_from: str,
     date_to: str,
     move_type: str | None = None,
     state: str | None = None,
     partner_id: int | None = None,
     limit: int = 50,
+    company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Search account.move (invoices and journal entries).
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         date_from: YYYY-MM-DD inclusive
         date_to: YYYY-MM-DD inclusive
         move_type: optional filter, e.g. "in_invoice", "out_invoice", "entry"
         state: optional, "draft" or "posted"
         partner_id: optional partner filter
         limit: max results (default 50)
+        company_id: restrict to one company (names like BNK1/2026/0014 repeat per company)
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("date", ">=", date_from), ("date", "<=", date_to)]
     if move_type:
         domain.append(("move_type", "=", move_type))
@@ -115,8 +123,10 @@ def odoo_search_invoices(
         domain.append(("state", "=", state))
     if partner_id:
         domain.append(("partner_id", "=", partner_id))
+    if company_id:
+        domain.append(("company_id", "=", company_id))
     fields = ["id", "name", "ref", "date", "state", "move_type",
-              "partner_id", "amount_total", "amount_residual", "currency_id"]
+              "partner_id", "amount_total", "amount_residual", "currency_id", "company_id"]
     return client.execute_kw(
         "account.move", "search_read", [domain],
         {"fields": fields, "limit": limit, "order": "date desc"},
@@ -124,14 +134,16 @@ def odoo_search_invoices(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_search_journal_entries(
-    instance: Instance,
     date_from: str | None = None,
     date_to: str | None = None,
     ref: str | None = None,
     state: str | None = None,
     journal_code: str | None = None,
     limit: int = 50,
+    company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Search account.move with `move_type='entry'` (manual journal entries).
 
@@ -139,15 +151,17 @@ def odoo_search_journal_entries(
     balances — anything that isn't a standard invoice/bill.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         date_from: optional YYYY-MM-DD inclusive
         date_to: optional YYYY-MM-DD inclusive
         ref: optional ilike match against the move reference
         state: optional, "draft" or "posted"
         journal_code: optional filter on journal short code (e.g. "MISC")
         limit: max results (default 50)
+        company_id: restrict to one company; entry names repeat per company
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
     domain: list[Any] = [("move_type", "=", "entry")]
     if date_from:
         domain.append(("date", ">=", date_from))
@@ -159,7 +173,9 @@ def odoo_search_journal_entries(
         domain.append(("state", "=", state))
     if journal_code:
         domain.append(("journal_id.code", "=", journal_code))
-    fields = ["id", "name", "ref", "date", "state", "journal_id"]
+    if company_id:
+        domain.append(("company_id", "=", company_id))
+    fields = ["id", "name", "ref", "date", "state", "journal_id", "company_id"]
     return client.execute_kw(
         "account.move", "search_read", [domain],
         {"fields": fields, "limit": limit, "order": "date desc, id desc"},
@@ -167,6 +183,7 @@ def odoo_search_journal_entries(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
     """Get full account.move with all journal lines.
 
@@ -223,11 +240,13 @@ def odoo_get_invoice(instance: Instance, move_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_get_account_balance(
-    instance: Instance,
     account_code: str,
     date_from: str | None = None,
     date_to: str | None = None,
+    company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Sum debit-credit on account.move.line for the given account code.
 
@@ -236,22 +255,32 @@ def odoo_get_account_balance(
     versions, while debit/credit are always authoritative in company currency.
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         account_code: account code, e.g. "2611" or "6231"
         date_from: optional start date inclusive
         date_to: optional end date inclusive
+        company_id: which company's account (required when the code exists in several)
 
     Returns:
-        {account_code, account_name, debit_sum, credit_sum, balance, line_count}
+        {account_code, account_name, company, debit_sum, credit_sum, balance, line_count}
     """
     client = get_client(instance)
+    enter_company_scope(company_id)
+    acc_domain: list[Any] = [("code", "=", account_code)]
+    if company_id:
+        acc_domain.append(("company_ids", "in", [company_id]))
     accs = client.execute_kw(
         "account.account", "search_read",
-        [[("code", "=", account_code)]],
-        {"fields": ["id", "code", "name"], "limit": 1},
+        [acc_domain],
+        {"fields": ["id", "code", "name", "company_ids"]},
     )
     if not accs:
         raise ValueError(f"Account {account_code} not found on {instance}")
+    if len(accs) > 1:
+        raise ValueError(
+            f"Account {account_code} exists in several companies on {instance} "
+            f"(company_ids {[a['company_ids'] for a in accs]}); pass company_id."
+        )
     acc = accs[0]
 
     domain: list[Any] = [("account_id", "=", acc["id"]),
@@ -278,12 +307,14 @@ def odoo_get_account_balance(
 
 
 @mcp.tool()
+@requires_scope(SCOPE_READ)
 def odoo_query_account_aggregate(
-    instance: Instance,
     account_codes: list[str],
     date_from: str,
     date_to: str,
     state: str = "posted",
+    company_id: int | None = None,
+    instance: Instance | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate debit/credit per account across multiple accounts in a period.
 
@@ -291,8 +322,9 @@ def odoo_query_account_aggregate(
     account code, with `debit_sum`, `credit_sum`, and `balance` (= debit-credit).
 
     Args:
-        instance: "prod" or "dev"
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
         account_codes: list of account codes to aggregate, e.g. ["2611", "2614", "2641"]
+        company_id: which company's accounts (required when a code exists in several)
         date_from: YYYY-MM-DD inclusive
         date_to: YYYY-MM-DD inclusive
         state: "posted" (default) or "draft" — applied to the parent move
@@ -305,11 +337,20 @@ def odoo_query_account_aggregate(
     if not account_codes:
         return []
     client = get_client(instance)
+    enter_company_scope(company_id)
+    acc_domain: list[Any] = [("code", "in", account_codes)]
+    if company_id:
+        acc_domain.append(("company_ids", "in", [company_id]))
     accs = client.execute_kw(
         "account.account", "search_read",
-        [[("code", "in", account_codes)]],
-        {"fields": ["id", "code", "name"]},
+        [acc_domain],
+        {"fields": ["id", "code", "name", "company_ids"]},
     )
+    dupes = sorted({a["code"] for a in accs if sum(1 for b in accs if b["code"] == a["code"]) > 1})
+    if dupes:
+        raise ValueError(
+            f"Account code(s) exist in several companies on {instance}: {', '.join(dupes)}. Pass company_id."
+        )
     by_code = {a["code"]: a for a in accs}
     acc_ids = [a["id"] for a in accs]
 
@@ -369,3 +410,289 @@ def odoo_query_account_aggregate(
             "line_count": int(bucket["count"]),
         })
     return sorted(results, key=lambda r: r["account_code"])
+
+
+# ---------------------------------------------------------------------------
+# Generic read escape-hatches (Phase 1)
+#
+# Let an agent reach any Odoo model read-only without a bespoke tool, covering
+# the long tail of "just look something up" without widening the write surface.
+# All read-tier: they never mutate state.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_search_read(
+    model: str,
+    domain: list[Any] | None = None,
+    fields: list[str] | None = None,
+    limit: int = 80,
+    offset: int = 0,
+    order: str | None = None,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """Generic read-only search_read against any Odoo model.
+
+    The escape hatch for reads without a dedicated tool. Relational fields come
+    back as Odoo `[id, display_name]` pairs (not resolved).
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        model: Odoo model name, e.g. "account.move", "res.partner", "product.product".
+        domain: Odoo domain — a list of triples and operators, e.g.
+            [["move_type", "=", "out_invoice"], ["state", "=", "posted"]]
+            (implicit AND). Omit or [] for all records.
+        fields: field names to return; omit for Odoo's default set (can be large).
+        limit: max rows (default 80; keep modest — this is a lookup, not an export).
+        offset: row offset for paging (default 0).
+        order: sort spec, e.g. "date desc, id desc".
+
+    Returns:
+        List of record dicts.
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain, or if a
+        denied field is requested. See `odoo_mcp.access`.
+    """
+    check_model(model)
+    check_fields(fields)
+    client = get_client(instance)
+    kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
+    if fields:
+        kwargs["fields"] = fields
+    if order:
+        kwargs["order"] = order
+    rows = client.execute_kw(model, "search_read", [domain or []], kwargs)
+    # Scrub unconditionally: with no `fields` Odoo returns its default set,
+    # which on ir.attachment carries the payload and access_token.
+    return scrub_rows(rows)
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_read_group(
+    model: str,
+    groupby: list[str],
+    fields: list[str] | None = None,
+    domain: list[Any] | None = None,
+    limit: int | None = None,
+    orderby: str | None = None,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """Group + aggregate records (Odoo `read_group`) — server-side reporting.
+
+    Far cheaper than pulling every row and summing client-side. Numeric fields
+    are aggregated (summed) per group.
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        model: Odoo model name, e.g. "account.move.line".
+        groupby: fields to group by, e.g. ["account_id"] or ["date:month"].
+        fields: measure fields to aggregate, e.g. ["balance", "debit", "credit"].
+            Omit to only get group keys + counts.
+        domain: optional Odoo domain to filter first.
+        limit: optional max groups.
+        orderby: optional sort, e.g. "account_id".
+
+    Returns:
+        List of group dicts. Each has the groupby key(s), the aggregated
+        measure(s), and `__count` (rows in the group).
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain, or if a
+        denied field is used as a measure or groupby key.
+    """
+    check_model(model)
+    check_fields(fields)
+    check_fields(groupby)
+    client = get_client(instance)
+    kwargs: dict[str, Any] = {"lazy": False}
+    if limit is not None:
+        kwargs["limit"] = limit
+    if orderby:
+        kwargs["orderby"] = orderby
+    rows = client.execute_kw(
+        model, "read_group", [domain or [], fields or [], groupby], kwargs
+    )
+    return scrub_rows(rows)
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_fields_get(
+    model: str,
+    attributes: list[str] | None = None,
+    instance: Instance | None = None,
+) -> dict[str, Any]:
+    """Introspect a model's fields (name -> metadata).
+
+    Use this to discover what fields exist before calling `odoo_search_read`
+    or a write tool on an unfamiliar model.
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        model: Odoo model name.
+        attributes: which field attributes to return; defaults to a compact set
+            (string, type, help, required, readonly, relation, selection).
+
+    Returns:
+        Dict mapping field name -> {attribute: value}. Denied fields are
+        omitted, so introspection cannot be used to route around the policy.
+
+    Raises:
+        AccessDenied if the model is outside the accounting domain.
+    """
+    check_model(model)
+    client = get_client(instance)
+    attrs = attributes or [
+        "string", "type", "help", "required", "readonly", "relation", "selection",
+    ]
+    result = client.execute_kw(model, "fields_get", [], {"attributes": attrs})
+    if isinstance(result, dict):
+        return {k: v for k, v in result.items() if k not in DENIED_FIELDS}
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Metadata readers (Phase 1)
+#
+# Thin, high-frequency lookups the agent needs to pick the right codes/ids when
+# building invoices, journal entries, payments, etc.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_journals(
+    company_id: int | None = None,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """List account journals (id, code, name, type, company_id).
+
+    Handy for picking a `journal_code` for entry/invoice/payment tools. In a
+    multi-company database the same code exists once per company, so pass
+    `company_id` (see `odoo_list_companies`) to the write tools as well.
+    """
+    client = get_client(instance)
+    enter_company_scope(company_id)
+    domain: list[Any] = [("company_id", "=", company_id)] if company_id else []
+    return client.execute_kw(
+        "account.journal", "search_read", [domain],
+        {"fields": ["id", "code", "name", "type", "company_id"], "order": "company_id, type, code"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_companies(instance: Instance | None = None) -> list[dict[str, Any]]:
+    """List the companies the caller may act in (id, name, currency).
+
+    Journals and accounts are per company; use the id as `company_id` in the
+    other tools when the database holds more than one company.
+    """
+    client = get_client(instance)
+    return client.execute_kw(
+        "res.company", "search_read", [[]],
+        {"fields": ["id", "name", "currency_id"], "order": "id"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_accounts(
+    query: str | None = None,
+    account_type: str | None = None,
+    limit: int = 200,
+    company_id: int | None = None,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """List/search the chart of accounts (id, code, name, account_type, company_ids).
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        query: optional substring match on code OR name.
+        account_type: optional Odoo account_type filter, e.g. "asset_cash",
+            "liability_payable", "income", "expense".
+        limit: max rows (default 200).
+        company_id: restrict to one company (multi-company databases).
+    """
+    client = get_client(instance)
+    enter_company_scope(company_id)
+    domain: list[Any] = []
+    if query:
+        domain = ["|", ("code", "ilike", query), ("name", "ilike", query)]
+    if account_type:
+        domain.append(("account_type", "=", account_type))
+    if company_id:
+        domain.append(("company_ids", "in", [company_id]))
+    return client.execute_kw(
+        "account.account", "search_read", [domain],
+        {"fields": ["id", "code", "name", "account_type", "company_ids"],
+         "limit": limit, "order": "code"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_taxes(
+    type_tax_use: str | None = None,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """List taxes (id, name, amount, amount_type, type_tax_use, price_include).
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        type_tax_use: optional filter — "sale", "purchase", or "none".
+    """
+    client = get_client(instance)
+    domain: list[Any] = []
+    if type_tax_use:
+        domain.append(("type_tax_use", "=", type_tax_use))
+    return client.execute_kw(
+        "account.tax", "search_read", [domain],
+        {"fields": ["id", "name", "amount", "amount_type",
+                    "type_tax_use", "price_include"],
+         "order": "type_tax_use, sequence"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_tax_tags(instance: Instance | None = None) -> list[dict[str, Any]]:
+    """List tax-report tags (id, name).
+
+    These are the `tax_tag_codes` accepted by the journal-entry / invoice tools
+    (e.g. Swedish `se_30`, `se_48`).
+    """
+    client = get_client(instance)
+    return client.execute_kw(
+        "account.account.tag", "search_read",
+        [[("applicability", "=", "taxes")]],
+        {"fields": ["id", "name"], "order": "name"},
+    )
+
+
+@mcp.tool()
+@requires_scope(SCOPE_READ)
+def odoo_list_products(
+    query: str | None = None,
+    limit: int = 50,
+    instance: Instance | None = None,
+) -> list[dict[str, Any]]:
+    """List/search products (id, name, default_code, list_price, uom).
+
+    Args:
+        instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
+        query: optional substring on name OR internal reference (default_code).
+        limit: max rows (default 50).
+    """
+    client = get_client(instance)
+    domain: list[Any] = []
+    if query:
+        domain = ["|", ("name", "ilike", query), ("default_code", "ilike", query)]
+    return client.execute_kw(
+        "product.product", "search_read", [domain],
+        {"fields": ["id", "name", "default_code", "list_price", "uom_id"],
+         "limit": limit, "order": "name"},
+    )
