@@ -70,6 +70,7 @@ def main() -> None:
     # Tool modules register themselves on import via @mcp.tool()
     from odoo_mcp.tools import (  # noqa: F401
         attachments,
+        expenses,
         read,
         receivables,
         write_critical,

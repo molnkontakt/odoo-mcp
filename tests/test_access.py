@@ -35,6 +35,7 @@ class TestModelPolicy:
             "res.currency",
             "res.company",
             "ir.attachment",
+            "hr.expense",
             "uom.uom",
         ],
     )
