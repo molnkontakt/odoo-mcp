@@ -138,7 +138,7 @@ class TestCreateExpense:
         with pytest.raises(ValidationError, match="several"):
             expenses.odoo_create_expense(employee_id=2, name="x", total_amount=10, date="2026-09-10",
                                          category_code="GRON", instance="dev")
-        assert not [c for c in patched_client.calls if c[0] == "hr.expense"]
+        assert not [c for c in patched_client.calls if c[0] == "hr.expense" and c[1] != "fields_get"]
 
     def test_category_or_product_required(self, patched_client):
         patched_client.state = _state()
