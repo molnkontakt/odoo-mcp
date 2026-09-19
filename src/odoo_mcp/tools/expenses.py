@@ -24,11 +24,20 @@ from typing import Any
 from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
 from odoo_mcp.auth import SCOPE_READ, SCOPE_WRITE, requires_scope
-from odoo_mcp.client import enter_company_scope, get_client
+from odoo_mcp.client import enter_company_scope, get_client, model_installed
 from odoo_mcp.instances import Instance, resolve_instance
 from odoo_mcp.validators import ValidationError
 
 PAYMENT_MODES: frozenset[str] = frozenset({"own_account", "company_account"})
+
+
+def _require_hr_expense(client: Any, instance: str | None) -> None:
+    """These tools need Odoo's *Expenses* app; say so instead of failing on the model."""
+    if not model_installed(client, "hr.expense"):
+        raise ValidationError(
+            f"The Expenses app (module hr_expense) is not installed on {instance or 'this instance'}; "
+            f"the expense tools are unavailable there. Invoices and journal entries still work."
+        )
 
 
 def _m2o_id(value: Any) -> int | None:
@@ -66,6 +75,7 @@ def odoo_list_employees(
         instance: instance name; may be omitted when only one is configured
     """
     client = get_client(instance)
+    _require_hr_expense(client, instance)
     enter_company_scope(company_id)
     domain: list[Any] = []
     if query:
@@ -100,6 +110,7 @@ def odoo_list_expense_categories(
         instance: instance name; may be omitted when only one is configured
     """
     client = get_client(instance)
+    _require_hr_expense(client, instance)
     enter_company_scope(company_id)
     domain: list[Any] = [("can_be_expensed", "=", True)]
     if company_id:
@@ -215,6 +226,7 @@ def odoo_create_expense(
 
     instance = resolve_instance(instance)
     client = get_client(instance)
+    _require_hr_expense(client, instance)
     audit_params = {
         "employee_id": int(employee_id), "name": name, "total_amount": float(total_amount),
         "date": date, "category_code": category_code, "product_id": product_id,

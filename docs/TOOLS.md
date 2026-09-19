@@ -264,6 +264,8 @@ submitted, approved or posted.
 - `category_code`: the category's internal reference (`odoo_list_expense_categories`), or `product_id`
 - `total_amount`: VAT included, company currency
 - `payment_mode`: `own_account` (reimburse the employee, default) | `company_account`
+- Needs the Expenses app (`hr_expense`); on an instance without it the three
+  expense tools answer "module not installed" before touching anything.
 
 **Returns:** `{expense_id, name, state, employee, company, category, total_amount, currency, date, payment_mode, attachment_id}`.
 

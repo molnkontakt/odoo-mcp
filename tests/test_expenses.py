@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import xmlrpc.client
+
 import pytest
 
 from odoo_mcp import client as client_module
+from odoo_mcp.client import model_installed
 from odoo_mcp.tools import expenses
 from odoo_mcp.validators import ValidationError
 
@@ -141,3 +144,42 @@ class TestCreateExpense:
         patched_client.state = _state()
         with pytest.raises(ValidationError, match="category_code or product_id"):
             expenses.odoo_create_expense(employee_id=2, name="x", total_amount=10, date="2026-09-10", instance="dev")
+
+
+class TestOptionalModule:
+    """Another installation may not have the Expenses app at all."""
+
+    @staticmethod
+    def _missing_model(args, kwargs):
+        raise xmlrpc.client.Fault(2, "Object hr.expense doesn't exist")
+
+    @staticmethod
+    def _gateway_missing_model(args, kwargs):
+        raise xmlrpc.client.Fault(2, "odoo.exceptions.AccessError: mcp.gateway: invalid model or method")
+
+    def test_model_installed_probe(self, mock_client):
+        mock_client.state = {"hr.expense": {"fields_get": {"id": {"type": "integer"}}}}
+        assert model_installed(mock_client, "hr.expense") is True
+        mock_client.state = {"hr.expense": {"fields_get": self._missing_model}}
+        assert model_installed(mock_client, "hr.expense") is False
+        mock_client.state = {"hr.expense": {"fields_get": self._gateway_missing_model}}
+        assert model_installed(mock_client, "hr.expense") is False
+
+    def test_other_faults_are_not_swallowed(self, mock_client):
+        def denied(args, kwargs):
+            raise xmlrpc.client.Fault(3, "Access Denied")
+        mock_client.state = {"hr.expense": {"fields_get": denied}}
+        with pytest.raises(xmlrpc.client.Fault, match="Access Denied"):
+            model_installed(mock_client, "hr.expense")
+
+    @pytest.mark.parametrize("call", [
+        lambda: expenses.odoo_list_employees(instance="dev"),
+        lambda: expenses.odoo_list_expense_categories(instance="dev"),
+        lambda: expenses.odoo_create_expense(employee_id=2, name="x", total_amount=10, date="2026-09-10",
+                                             category_code="GRON", instance="dev"),
+    ])
+    def test_tools_explain_when_hr_expense_is_missing(self, patched_client, call):
+        patched_client.state = {"hr.expense": {"fields_get": self._missing_model}}
+        with pytest.raises(ValidationError, match="hr_expense.*not installed"):
+            call()
+        assert [c for c in patched_client.calls if c[1] != "fields_get"] == [], "nothing else was attempted"

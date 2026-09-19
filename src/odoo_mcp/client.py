@@ -218,6 +218,26 @@ class OdooClient:
         )
 
 
+def model_installed(client: Any, model: str) -> bool:
+    """Is `model` present on the instance, i.e. is its module installed?
+
+    Cheap `fields_get` probe (no rows, no ACL on data). Odoo answers a missing
+    model with a Fault ("Object x doesn't exist"), and the impersonation
+    gateway with "invalid model or method"; anything else is a real error and
+    is re-raised. Tools that depend on an optional module (hr_expense, …)
+    call this so the user gets "module not installed" instead of an XML-RPC
+    stack trace.
+    """
+    try:
+        client.execute_kw(model, "fields_get", [["id"]], {"attributes": ["type"]})
+    except xmlrpc.client.Fault as fault:
+        text = str(fault.faultString)
+        if "doesn't exist" in text or "invalid model or method" in text:
+            return False
+        raise
+    return True
+
+
 @lru_cache(maxsize=8)
 def _client_for(instance: str) -> OdooClient:
     return OdooClient(instance)

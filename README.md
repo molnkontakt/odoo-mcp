@@ -107,8 +107,26 @@ needed for local development.
 - Python 3.11+
 - FastMCP
 - Odoo 16+ with XML-RPC enabled (default on all self-hosted installations)
+  and the *Invoicing/Accounting* app (`account`). Every other Odoo module is
+  optional — see [Optional Odoo modules](#optional-odoo-modules)
 - (Optional) PostgreSQL for audit logging
 - (Optional) A secret manager such as Phase or Vault for credentials
+
+## Optional Odoo modules
+
+The server does not assume a particular set of Odoo apps beyond `account`.
+Tools that depend on something else probe for it and say so when it is
+missing, instead of surfacing an XML-RPC fault:
+
+| Odoo module | What it enables | Without it |
+|---|---|---|
+| `hr_expense` (Expenses app) | `odoo_create_expense`, `odoo_list_employees`, `odoo_list_expense_categories` | those three tools answer "module not installed"; everything else works |
+| `account_invoice_reminder` (OCA) | reminder level/date columns in `odoo_overdue_invoices` and `odoo_customer_statement` | the columns are left out |
+| `odoo_mcp_gateway` (this repo, `addons/`) | act-as-caller: every call runs as the OAuth user, with that user's Odoo rights | run with `ODOO_<NAME>_IMPERSONATE` unset; all calls use the service account's rights |
+
+Tools are always listed to the client — MCP tool discovery happens before any
+Odoo call — so an assistant may offer an expense tool on an instance that
+cannot serve it. The refusal is immediate and explains which module is missing.
 
 ## License
 
