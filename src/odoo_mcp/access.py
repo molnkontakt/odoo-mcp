@@ -43,6 +43,9 @@ ALLOWED_MODELS: frozenset[str] = frozenset(
         "res.currency.rate",
         "res.company",
         "ir.attachment",
+        # Expense claims are accounting data; hr.employee stays closed (see
+        # tools/expenses.py for the curated lookup).
+        "hr.expense",
     }
 )
 

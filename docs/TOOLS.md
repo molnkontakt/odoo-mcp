@@ -160,6 +160,8 @@ Thin lookups for picking the right code/id when building entries/invoices:
 | `odoo_customer_statement(instance, partner_id, company_id?, include_paid=False, limit=100)` | one customer's invoices/credit notes and balance due |
 | `odoo_list_attachments(res_model, res_id)` | files on an accounting/expense record: `attachment_id, name, mimetype, file_size, viewable` (no content) |
 | `odoo_get_attachment_image(attachment_id, page=1, max_px=1600, company_id?)` | one attachment as an inline image: images downscaled to JPEG, PDFs rendered one page per call as PNG; only image/PDF on account.*/hr.expense*/product.*/res.partner. Needs the `images` extra (Pillow, PyMuPDF). Internal users only: Odoo gives portal users no RPC access to `ir.attachment` |
+| `odoo_list_employees(query?, company_id?, limit=50)` | employees an expense can be filed for: `employee_id, name, company, work_email` — one row per company the person belongs to; read from `hr.employee.public`, so any internal user can call it, and nothing private from `hr.employee` is served |
+| `odoo_list_expense_categories(company_id?)` | expense categories (products flagged *can be expensed*): `product_id, code, name, company`; `code` is what `odoo_create_expense` takes |
 | `odoo_list_companies(instance)` | companies: `id, name, currency_id` — journals and accounts are per company |
 | `odoo_list_journals(instance, company_id?)` | journals: `id, code, name, type, company_id` |
 | `odoo_list_accounts(instance, query?, account_type?, limit=200, company_id?)` | CoA: `id, code, name, account_type, company_ids` |
@@ -247,6 +249,25 @@ Create a `product.product` (`product_type`: `service` | `consu`).
 
 Attach a base64-encoded file to any record (e.g. a supplier PDF onto a draft
 bill — feeds the OCR flow). **Returns:** `{attachment_id, name, res_model, res_id}`.
+
+### `odoo_create_expense(instance, employee_id, name, total_amount, date, category_code?, product_id?, receipt_base64?, receipt_filename?, receipt_mimetype?, payment_mode="own_account", description?)`
+
+Create a **draft** expense claim (`hr.expense`) — the treasurer filing a board
+member's receipt, or an employee filing their own. Odoo's record rules decide
+which: a plain employee can only create on their own employee record, an
+expense approver on anyone's. The company is taken from the
+employee record, the category must be usable in that company, and the receipt
+travels in the same call: it is attached and set as the expense's main
+attachment, so the voucher never exists without its document. Nothing is
+submitted, approved or posted.
+
+- `category_code`: the category's internal reference (`odoo_list_expense_categories`), or `product_id`
+- `total_amount`: VAT included, company currency
+- `payment_mode`: `own_account` (reimburse the employee, default) | `company_account`
+- Needs the Expenses app (`hr_expense`); on an instance without it the three
+  expense tools answer "module not installed" before touching anything.
+
+**Returns:** `{expense_id, name, state, employee, company, category, total_amount, currency, date, payment_mode, attachment_id}`.
 
 ## Write tools — critical (Phase 3, shipped)
 
