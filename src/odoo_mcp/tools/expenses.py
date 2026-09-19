@@ -11,7 +11,10 @@ vouchers end up without documents.
 Everything here is draft-only: the expense is created in Odoo's initial
 state for a human to submit, approve and post. The generic readers stay closed
 for `hr.employee` (it carries private data — home address, identity number,
-bank account); `odoo_list_employees` returns only what is needed to pick one.
+bank account); the lookups read `hr.employee.public`, the view Odoo gives every
+internal user (same ids, only the directory fields). That also means a member
+filing their *own* receipt works with plain employee rights: Odoo's record rule
+lets them create expenses only for themselves, which is exactly the point.
 """
 
 from __future__ import annotations
@@ -70,7 +73,7 @@ def odoo_list_employees(
     if company_id:
         domain.append(("company_id", "=", int(company_id)))
     rows = client.execute_kw(
-        "hr.employee", "search_read", [domain],
+        "hr.employee.public", "search_read", [domain],
         {"fields": ["id", "name", "company_id", "work_email"], "limit": int(limit), "order": "name, company_id"},
     )
     return [
@@ -114,7 +117,7 @@ def odoo_list_expense_categories(
 
 def _resolve_employee(client: Any, employee_id: int, instance: str) -> dict[str, Any]:
     rows = client.execute_kw(
-        "hr.employee", "read", [[int(employee_id)]], {"fields": ["id", "name", "company_id"]},
+        "hr.employee.public", "read", [[int(employee_id)]], {"fields": ["id", "name", "company_id"]},
     )
     if not rows:
         raise ValidationError(f"Employee {employee_id} not found on {instance} (odoo_list_employees)")
@@ -167,9 +170,11 @@ def odoo_create_expense(
 ) -> dict[str, Any]:
     """Create a DRAFT expense claim (hr.expense) for an employee, receipt included.
 
-    Meant for the treasurer or bookkeeper filing a receipt on someone else's
-    behalf. The expense lands in Odoo's initial state for a human to submit,
-    approve and post; nothing is booked by this call. The company is taken
+    For the treasurer filing a receipt on someone else's behalf, or an
+    employee filing their own. Odoo's record rules decide which: a plain
+    employee can only create expenses on their own employee record, an
+    expense approver on anyone's. The expense lands in Odoo's initial state
+    for a human to submit, approve and post; nothing is booked by this call. The company is taken
     from the employee record (an employee belongs to exactly one company, see
     `odoo_list_employees`), and the category must be usable in that company.
 

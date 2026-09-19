@@ -21,7 +21,7 @@ def patched_client(mock_client, monkeypatch):
 
 def _state(**overrides):
     state = {
-        "hr.employee": {"read": [EMPLOYEE]},
+        "hr.employee.public": {"read": [EMPLOYEE]},
         "product.product": {"search_read": [CATEGORY]},
         "hr.expense": {
             "create": 501,
@@ -37,14 +37,15 @@ def _state(**overrides):
 
 class TestLookups:
     def test_list_employees_returns_only_the_four_fields(self, patched_client):
-        patched_client.state = {"hr.employee": {"search_read": [
+        patched_client.state = {"hr.employee.public": {"search_read": [
             {"id": 2, "name": "Benny Example", "company_id": [1, "Road"], "work_email": "b@example.test",
              "private_street": "should never be here"},
         ]}}
         rows = expenses.odoo_list_employees(query="benny", company_id=1, instance="dev")
         assert rows == [{"employee_id": 2, "name": "Benny Example", "company": {"id": 1, "name": "Road"},
                          "work_email": "b@example.test"}]
-        _, _, args, kwargs = patched_client.calls[-1]
+        model, _, args, kwargs = patched_client.calls[-1]
+        assert model == "hr.employee.public", "the directory view every internal user may read"
         assert ("name", "ilike", "benny") in args[0] and ("company_id", "=", 1) in args[0]
         assert kwargs["fields"] == ["id", "name", "company_id", "work_email"]
 
@@ -71,6 +72,7 @@ class TestCreateExpense:
         assert result["category"] == {"id": 7, "code": "GRON", "name": "Green areas – material"}
         assert result["currency"] == "SEK"
 
+        assert not [c for c in patched_client.calls if c[0] == "hr.employee"], "only the public view is read"
         create = next(c for c in patched_client.calls if c[0] == "hr.expense" and c[1] == "create")
         vals = create[2][0]
         assert vals["company_id"] == 1, "company comes from the employee, not the caller"
@@ -119,7 +121,7 @@ class TestCreateExpense:
         assert patched_client.calls == []
 
     def test_unknown_employee(self, patched_client):
-        patched_client.state = _state(**{"hr.employee": {"read": []}})
+        patched_client.state = _state(**{"hr.employee.public": {"read": []}})
         with pytest.raises(ValidationError, match="Employee 99"):
             expenses.odoo_create_expense(employee_id=99, name="x", total_amount=10, date="2026-09-10",
                                          category_code="GRON", instance="dev")
