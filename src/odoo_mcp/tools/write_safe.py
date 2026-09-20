@@ -693,29 +693,36 @@ def odoo_upload_attachment(
     filename: str,
     data_base64: str,
     mimetype: str | None = None,
+    set_as_main: bool = False,
     instance: Instance | None = None,
 ) -> dict[str, Any]:
     """Attach a base64-encoded file to any record (e.g. a PDF onto an invoice).
 
     Feeds the OCR/invoice flow: upload a supplier PDF onto the draft bill.
+    With `set_as_main=True` the file also becomes the record's main attachment
+    (`message_main_attachment_id`): the one shown in the preview and counted by
+    "missing document" filters. Odoo only promotes chatter uploads on its own,
+    so use it for the receipt of an expense or the PDF of a supplier bill.
+    Large photos: downscale first (JPEG, ≤1600 px on the long side, quality ~80).
 
     Args:
         instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
-        res_model: model to attach to, e.g. "account.move"
+        res_model: model to attach to, e.g. "account.move", "hr.expense"
         res_id: record id
         filename: display name, e.g. "invoice_123.pdf"
         data_base64: file contents, base64-encoded (string)
         mimetype: optional, e.g. "application/pdf"
+        set_as_main: also make it the record's main attachment (default False)
 
     Returns:
-        {attachment_id, name, res_model, res_id}
+        {attachment_id, name, res_model, res_id, main_attachment}
     """
     instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
         tool="odoo_upload_attachment", instance=instance,
         params={"res_model": res_model, "res_id": int(res_id),
-                "filename": filename, "bytes_b64": len(data_base64)},
+                "filename": filename, "bytes_b64": len(data_base64), "set_as_main": set_as_main},
     ) as ctx:
         vals: dict[str, Any] = {
             "name": filename,
@@ -726,10 +733,18 @@ def odoo_upload_attachment(
         if mimetype:
             vals["mimetype"] = mimetype
         attachment_id = client.execute_kw("ir.attachment", "create", [vals])
-        ctx.summary = f"attachment {attachment_id} '{filename}' -> {res_model},{res_id}"
+        if set_as_main:
+            client.execute_kw(
+                res_model, "write", [[int(res_id)], {"message_main_attachment_id": int(attachment_id)}],
+            )
+        ctx.summary = (
+            f"attachment {attachment_id} '{filename}' -> {res_model},{res_id}"
+            f"{' (main)' if set_as_main else ''}"
+        )
         return {
             "attachment_id": int(attachment_id),
             "name": filename,
             "res_model": res_model,
             "res_id": int(res_id),
+            "main_attachment": bool(set_as_main),
         }

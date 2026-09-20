@@ -71,6 +71,7 @@ class TestCreateExpense:
         )
         assert result["expense_id"] == 501 and result["state"] == "draft"
         assert result["attachment_id"] == 1100
+        assert "warning" not in result
         assert result["company"] == {"id": 1, "name": "Example Road Association"}
         assert result["category"] == {"id": 7, "code": "GRON", "name": "Green areas – material"}
         assert result["currency"] == "SEK"
@@ -103,6 +104,8 @@ class TestCreateExpense:
         result = expenses.odoo_create_expense(employee_id=2, name="x", total_amount=10, date="2026-09-10",
                                               category_code="GRON", instance="dev")
         assert result["attachment_id"] is None
+        assert "incomplete voucher" in result["warning"] and "set_as_main=True" in result["warning"]
+        assert f"res_id={result['expense_id']}" in result["warning"]
         assert not [c for c in patched_client.calls if c[0] == "ir.attachment"]
 
     @pytest.mark.parametrize(
