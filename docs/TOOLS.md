@@ -245,10 +245,14 @@ Create a `res.partner`. `country_code` (e.g. `"SE"`) is resolved to `country_id`
 Create a `product.product` (`product_type`: `service` | `consu`).
 **Returns:** `{product_id, name}`.
 
-### `odoo_upload_attachment(instance, res_model, res_id, filename, data_base64, mimetype?)`
+### `odoo_upload_attachment(instance, res_model, res_id, filename, data_base64, mimetype?, set_as_main=False)`
 
 Attach a base64-encoded file to any record (e.g. a supplier PDF onto a draft
-bill — feeds the OCR flow). **Returns:** `{attachment_id, name, res_model, res_id}`.
+bill — feeds the OCR flow). `set_as_main=True` also makes it the record's main
+attachment (`message_main_attachment_id`), which Odoo otherwise only does for
+chatter uploads — use it for a receipt added after the expense was created.
+Photos: downscale first (JPEG, ≤1600 px on the long side, quality ~80).
+**Returns:** `{attachment_id, name, res_model, res_id, main_attachment}`.
 
 ### `odoo_create_expense(instance, employee_id, name, total_amount, date, category_code?, product_id?, receipt_base64?, receipt_filename?, receipt_mimetype?, payment_mode="own_account", description?)`
 
@@ -264,6 +268,10 @@ submitted, approved or posted.
 - `category_code`: the category's internal reference (`odoo_list_expense_categories`), or `product_id`
 - `total_amount`: VAT included, company currency
 - `payment_mode`: `own_account` (reimburse the employee, default) | `company_account`
+- `receipt_base64`: downscale a photo first (JPEG, ≤1600 px on the long side,
+  quality ~80 → 100–300 kB); a raw phone photo is too large as a tool argument.
+  Without a receipt the result carries a `warning` and the voucher is incomplete
+  until one is added with `odoo_upload_attachment(..., set_as_main=True)`.
 - Needs the Expenses app (`hr_expense`); on an instance without it the three
   expense tools answer "module not installed" before touching anything.
 

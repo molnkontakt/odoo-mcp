@@ -170,3 +170,15 @@ class TestUploadAttachment:
         assert vals["res_model"] == "account.move"
         assert vals["res_id"] == 555
         assert vals["datas"] == "JVBERi0="
+        assert result["main_attachment"] is False
+        assert not [c for c in patched_client.calls if c[1] == "write"], "no main attachment unless asked"
+
+    def test_set_as_main_writes_the_record(self, patched_client):
+        patched_client.state = {"ir.attachment": {"create": 778}, "hr.expense": {"write": True}}
+        result = write_safe.odoo_upload_attachment(
+            instance="dev", res_model="hr.expense", res_id=7,
+            filename="kvitto.jpg", data_base64="AAAA", mimetype="image/jpeg", set_as_main=True,
+        )
+        assert result["main_attachment"] is True
+        write = next(c for c in patched_client.calls if c[1] == "write")
+        assert write[0] == "hr.expense" and write[2] == [[7], {"message_main_attachment_id": 778}]

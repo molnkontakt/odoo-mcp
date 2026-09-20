@@ -192,6 +192,12 @@ def odoo_create_expense(
     Attach the receipt here rather than in a later call: the document is part
     of the voucher, and the attachment becomes the expense's main attachment
     so it shows in the preview and follows the expense into the journal entry.
+    A phone photo is several MB and too big as a tool argument, so downscale
+    it first: JPEG, longest side 1600 px, quality ~80 — a receipt then lands at
+    100–300 kB and is still legible. Do not skip the receipt because the
+    original is large. If it really cannot be sent now, the result carries a
+    `warning`; add it later with `odoo_upload_attachment(res_model="hr.expense",
+    res_id=<expense_id>, ..., set_as_main=True)`.
 
     Args:
         employee_id: hr.employee id (`odoo_list_employees`)
@@ -201,7 +207,8 @@ def odoo_create_expense(
         date: receipt date YYYY-MM-DD
         category_code: expense category by internal reference (`odoo_list_expense_categories`)
         product_id: the category by product id instead of code
-        receipt_base64: the receipt (image or PDF), base64-encoded
+        receipt_base64: the receipt (image or PDF), base64-encoded — downscaled
+            first (JPEG, ≤1600 px on the long side, quality ~80), see above
         receipt_filename: e.g. "kvitto-jula-2026-09-10.jpg" (required with receipt_base64)
         receipt_mimetype: e.g. "image/jpeg" or "application/pdf" (optional)
         payment_mode: "own_account" (default; the employee paid and is to be
@@ -211,7 +218,8 @@ def odoo_create_expense(
 
     Returns:
         {expense_id, name, state, employee, company, category, total_amount,
-         date, payment_mode, attachment_id}
+         date, payment_mode, attachment_id, warning?} — `warning` is present
+        when no receipt was attached.
     """
     if not (name or "").strip():
         raise ValidationError("name must not be empty")
@@ -280,7 +288,7 @@ def odoo_create_expense(
             f"created expense id={expense_id} employee={employee['name']} "
             f"total={row.get('total_amount', total_amount)} receipt={'yes' if attachment_id else 'no'}"
         )
-        return {
+        result: dict[str, Any] = {
             "expense_id": expense_id,
             "name": row.get("name", vals["name"]),
             "state": row.get("state", "draft"),
@@ -293,3 +301,11 @@ def odoo_create_expense(
             "payment_mode": payment_mode,
             "attachment_id": attachment_id,
         }
+        if not attachment_id:
+            result["warning"] = (
+                f"No receipt attached: expense {expense_id} is an incomplete voucher until it has one. "
+                f"Attach it with odoo_upload_attachment(res_model='hr.expense', res_id={expense_id}, "
+                f"filename=..., data_base64=..., set_as_main=True) — downscale the photo first "
+                f"(JPEG, ≤1600 px, quality ~80)."
+            )
+        return result
