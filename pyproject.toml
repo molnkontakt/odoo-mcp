@@ -20,7 +20,7 @@ dependencies = [
     # (RemoteAuthProvider, OAuthProxy, JWTVerifier) is written and tested
     # against 3.x. A fresh deploy would otherwise silently install a major it
     # has never run on. Lift it after testing against 4.x.
-    "fastmcp>=3.3.1,<4",
+    "fastmcp>=3.3.1,<5",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
 ]
