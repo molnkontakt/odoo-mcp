@@ -22,6 +22,7 @@ import os
 
 from odoo_mcp.app import mcp
 from odoo_mcp.auth import AuthConfigError, get_auth_settings
+from odoo_mcp.instances import validate_extra_read_models
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -76,6 +77,10 @@ def main() -> None:
         write_critical,
         write_safe,
     )
+
+    # Fail at start-up, not on the first read, when an instance's extra read
+    # models are malformed or name a denied model.
+    validate_extra_read_models()
 
     transport = resolve_transport()
     if transport == "stdio":

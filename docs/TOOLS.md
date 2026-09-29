@@ -115,8 +115,23 @@ bespoke tool per model. All read-tier — they never mutate state.
 > `/web/content/<id>?access_token=…` fetchable with **no session at all**, so a
 > read permission would otherwise be enough to lift documents out permanently.
 >
-> To widen the domain, edit `ALLOWED_MODELS` in `odoo_mcp/access.py`
-> deliberately. There is no runtime override.
+> To widen the domain for every instance, edit `ALLOWED_MODELS` in
+> `odoo_mcp/access.py` deliberately. There is no call-time override.
+>
+> **Per-instance extra read models:** an instance with a custom module can let
+> these three tools reach its models with `ODOO_<NAME>_EXTRA_READ_MODELS`, a
+> comma-separated list of exact model names (e.g.
+> `ODOO_ACME_EXTRA_READ_MODELS=acme.budget,acme.budget.line`).
+>
+> - **Exact names only** — no wildcards or prefixes; each entry must match
+>   `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Entries are trimmed, empty ones ignored.
+> - **Denials win.** A denied model, or anything under `ir.`, `res.users.`,
+>   `res.groups.`, `mail.`, `auth.`/`auth_`, `bus.` or `base.`, cannot be listed.
+>   The server refuses to start on an invalid or denied entry.
+> - **Bound to the instance** it is set for; other instances still refuse the model.
+> - **Read-only.** Only the generic readers consult it. No write tool, and not
+>   the attachment tools, is opened by it. Denied fields are still refused and
+>   scrubbed on these models.
 
 ### `odoo_search_read(instance, model, domain?, fields?, limit=80, offset=0, order?)`
 

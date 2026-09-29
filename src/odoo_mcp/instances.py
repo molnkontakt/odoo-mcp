@@ -8,11 +8,17 @@ AWS SSM, etc.) or a `.env` file (gitignored).
 
 An instance is treated as *production* (gated behind ``odoo:prod`` over HTTP)
 when it is named ``prod`` or when ``ODOO_<NAME>_PRODUCTION`` is truthy.
+
+``ODOO_<NAME>_EXTRA_READ_MODELS`` (optional) is a comma-separated list of exact
+model names the generic read tools may reach on that instance only, on top of
+the shared policy in ``access.py``. Read-only; see ``extra_read_models``.
 """
 
 import os
 from dataclasses import dataclass
 from typing import Literal
+
+from odoo_mcp.access import parse_extra_read_models
 
 DEFAULT_INSTANCES = ("prod", "dev")
 _TRUE = ("1", "true", "yes", "on")
@@ -56,6 +62,23 @@ def resolve_instance(instance: str | None) -> str:
 def is_production(instance: str) -> bool:
     name = str(instance).strip().lower()
     return name == "prod" or os.environ.get(f"ODOO_{name.upper()}_PRODUCTION", "").strip().lower() in _TRUE
+
+
+def extra_read_models(instance: str) -> frozenset[str]:
+    """Models the generic readers may reach on ``instance`` beyond the shared policy.
+
+    From ``ODOO_<NAME>_EXTRA_READ_MODELS``; unset or empty means none. Raises
+    ValueError on an invalid entry (see ``access.parse_extra_read_models``);
+    ``validate_extra_read_models`` runs the same check for every instance at
+    start-up, so a bad value stops the server instead of surfacing per call.
+    """
+    key = f"ODOO_{str(instance).strip().upper()}_EXTRA_READ_MODELS"
+    return parse_extra_read_models(os.environ.get(key), key)
+
+
+def validate_extra_read_models() -> dict[str, frozenset[str]]:
+    """Parse every configured instance's extra list; raise on the first bad one."""
+    return {name: extra_read_models(name) for name in available_instances()}
 
 
 @dataclass(frozen=True)

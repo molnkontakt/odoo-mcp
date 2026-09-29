@@ -42,6 +42,12 @@ Out of scope:
   or read from files at rest in the repo
 - Tool calls are split into `read`, `write_safe`, and `write_critical`
   tiers; write_critical requires explicit `confirm=True` in payload
+- The generic read tools (`odoo_search_read`, `odoo_read_group`,
+  `odoo_fields_get`) are default-deny on models and always-deny on
+  sensitive fields (`src/odoo_mcp/access.py`). An instance may add exact
+  model names for reading only via `ODOO_<NAME>_EXTRA_READ_MODELS`; denied
+  models and namespaces can never be opened that way, and invalid values
+  stop the server at start-up
 - Audit logging is recommended for production deployments — see PLAN.md
 
 ## Hall of Fame
