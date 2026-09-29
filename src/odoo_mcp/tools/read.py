@@ -6,7 +6,7 @@ from odoo_mcp.access import DENIED_FIELDS, check_fields, check_model, scrub_rows
 from odoo_mcp.app import mcp
 from odoo_mcp.auth import SCOPE_READ, requires_scope
 from odoo_mcp.client import enter_company_scope, get_client
-from odoo_mcp.instances import Instance
+from odoo_mcp.instances import Instance, extra_read_models, resolve_instance
 
 
 def _resolve_country_codes(client: Any, partner_rows: list[dict[str, Any]]) -> None:
@@ -421,6 +421,21 @@ def odoo_query_account_aggregate(
 # ---------------------------------------------------------------------------
 
 
+def _check_read_model(model: str, instance: str | None) -> None:
+    """Model policy for the generic readers, including the instance's extra list.
+
+    The extra list is bound to the instance the call resolves to. If that cannot
+    be resolved (several instances, none named) the shared policy applies alone;
+    get_client then raises the resolution error.
+    """
+    try:
+        name: str | None = resolve_instance(instance)
+    except ValueError:
+        name = None
+    extras = extra_read_models(name) if name else frozenset()
+    check_model(model, extra_read_models=extras)
+
+
 @mcp.tool()
 @requires_scope(SCOPE_READ)
 def odoo_search_read(
@@ -455,7 +470,7 @@ def odoo_search_read(
         AccessDenied if the model is outside the accounting domain, or if a
         denied field is requested. See `odoo_mcp.access`.
     """
-    check_model(model)
+    _check_read_model(model, instance)
     check_fields(fields)
     client = get_client(instance)
     kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
@@ -503,7 +518,7 @@ def odoo_read_group(
         AccessDenied if the model is outside the accounting domain, or if a
         denied field is used as a measure or groupby key.
     """
-    check_model(model)
+    _check_read_model(model, instance)
     check_fields(fields)
     check_fields(groupby)
     client = get_client(instance)
@@ -543,7 +558,7 @@ def odoo_fields_get(
     Raises:
         AccessDenied if the model is outside the accounting domain.
     """
-    check_model(model)
+    _check_read_model(model, instance)
     client = get_client(instance)
     attrs = attributes or [
         "string", "type", "help", "required", "readonly", "relation", "selection",

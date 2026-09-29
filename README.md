@@ -33,6 +33,9 @@ export ODOO_ACME_DB=odoo
 export ODOO_ACME_USER=...
 export ODOO_ACME_PASSWORD=...
 export ODOO_ACME_PRODUCTION=1
+# Optional, per instance: extra models the generic read tools may reach on this
+# instance only (exact names, comma-separated; read-only, denylist still wins).
+export ODOO_ACME_EXTRA_READ_MODELS=acme.budget,acme.budget.line
 
 # Optional — turn on audit logging
 export MCP_AUDIT_DB_URL=postgresql://user:pass@host/dbname

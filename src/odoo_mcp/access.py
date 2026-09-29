@@ -18,10 +18,18 @@ legitimately used by `odoo_upload_attachment`, but `access_token` makes
 `datas`/`raw` are the document bytes. Those are stripped from results even when
 the caller did not name them, because omitting `fields` makes Odoo return its
 default set.
+
+**Per-instance extra read models.** An instance can list further models its
+generic readers may reach with ``ODOO_<NAME>_EXTRA_READ_MODELS`` (see
+``instances.extra_read_models``) — for a custom module that only exists in that
+database. The list is exact names only, it only widens `check_model` (which
+only the read escape hatches call), and every denial below is checked first.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Collection
 from typing import Any
 
 #: Model prefixes that are in-domain for an accounting server. Trailing dot is
@@ -68,6 +76,24 @@ DENIED_MODELS: frozenset[str] = frozenset(
     }
 )
 
+#: Namespaces a per-instance extra list may never name, on top of
+#: DENIED_MODELS: framework administration, users/groups and their satellites,
+#: messaging and authentication. The base allow rules never reach these either
+#: (``ir.attachment`` is the one ``ir.*`` model, and it is allowed by name).
+EXTRA_DENIED_PREFIXES: tuple[str, ...] = (
+    "ir.",
+    "res.users.",
+    "res.groups.",
+    "mail.",
+    "auth.",
+    "auth_",
+    "bus.",
+    "base.",
+)
+
+#: Exact Odoo model name: lower-case dotted identifiers, no wildcards.
+MODEL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
+
 #: Fields never returned by the generic readers, on any model. These are the
 #: ones that turn a read permission into document exfiltration.
 DENIED_FIELDS: frozenset[str] = frozenset(
@@ -89,8 +115,45 @@ class AccessDenied(Exception):
     """Raised when the policy blocks a model or field."""
 
 
-def check_model(model: str) -> None:
-    """Raise AccessDenied unless `model` is readable via the generic tools."""
+def is_denied_model(name: str) -> bool:
+    """True for models no configuration may open (the extra-list denylist)."""
+    return name in DENIED_MODELS or any(name.startswith(p) for p in EXTRA_DENIED_PREFIXES)
+
+
+def parse_extra_read_models(raw: str | None, source: str) -> frozenset[str]:
+    """Parse a comma-separated list of exact model names.
+
+    Strict on purpose, because a typo here is a policy decision: entries are
+    trimmed and empty ones ignored, but anything that is not an exact model
+    name (wildcards, prefixes, upper case) or that names a denied model raises
+    ValueError. ``source`` names the variable in the error message.
+    """
+    names: set[str] = set()
+    for part in (raw or "").split(","):
+        name = part.strip()
+        if not name:
+            continue
+        if not MODEL_NAME_RE.fullmatch(name):
+            raise ValueError(
+                f"{source}: {name!r} is not an exact Odoo model name "
+                f"(expected e.g. 'acme.budget'; wildcards and prefixes are not accepted)."
+            )
+        if is_denied_model(name):
+            raise ValueError(
+                f"{source}: {name!r} is denied by policy and cannot be opened by configuration."
+            )
+        names.add(name)
+    return frozenset(names)
+
+
+def check_model(model: str, *, extra_read_models: Collection[str] = ()) -> None:
+    """Raise AccessDenied unless `model` is readable via the generic tools.
+
+    ``extra_read_models`` is the per-instance extra list for the instance the
+    call goes to. Only the read escape hatches (tools/read.py) call this; write
+    tools address fixed models and never consult it. Denials are checked first,
+    so the extra list can never open a denied model.
+    """
     name = (model or "").strip()
     if not name:
         raise AccessDenied("No model given.")
@@ -106,13 +169,18 @@ def check_model(model: str) -> None:
         return
     if any(name.startswith(p) for p in ALLOWED_MODEL_PREFIXES):
         return
+    if name in extra_read_models and not is_denied_model(name):
+        return
 
     raise AccessDenied(
         f"Model '{name}' is not in the allowed accounting domain. "
         f"Allowed: {', '.join(sorted(ALLOWED_MODEL_PREFIXES))}* plus "
-        f"{', '.join(sorted(ALLOWED_MODELS))}. "
-        f"If this model is genuinely needed, add it to ALLOWED_MODELS in "
-        f"odoo_mcp/access.py — deliberately, not at call time."
+        f"{', '.join(sorted(ALLOWED_MODELS))}"
+        f"{''.join(', ' + m for m in sorted(extra_read_models))}. "
+        f"If this model is genuinely needed on one instance, list it in "
+        f"ODOO_<NAME>_EXTRA_READ_MODELS for that instance (read-only); for "
+        f"every instance, add it to ALLOWED_MODELS in odoo_mcp/access.py — "
+        f"deliberately, not at call time."
     )
 
 
