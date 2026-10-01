@@ -333,6 +333,13 @@ class TestToolsAreGuarded:
             ("write_critical", "odoo_post_journal_entry"),
             ("write_critical", "odoo_register_payment"),
             ("write_critical", "odoo_reverse_move"),
+            ("calendar_events", "odoo_create_calendar_event"),
+            ("calendar_events", "odoo_update_calendar_event"),
+            ("calendar_events", "odoo_archive_calendar_event"),
+            ("todos", "odoo_list_todos"),
+            ("todos", "odoo_create_todo"),
+            ("todos", "odoo_update_todo"),
+            ("todos", "odoo_set_todo_state"),
         ],
     )
     def test_tool_denies_a_token_with_no_scopes(self, oauth_on, module_name, tool_name):
@@ -344,10 +351,50 @@ class TestToolsAreGuarded:
         with pytest.raises(ScopeDenied):
             tool(instance="dev")
 
-    def test_every_registered_tool_is_wrapped(self):
-        from odoo_mcp.tools import read, write_critical, write_safe
+    @pytest.mark.parametrize(
+        "module_name, tool_name",
+        [
+            ("calendar_events", "odoo_create_calendar_event"),
+            ("calendar_events", "odoo_update_calendar_event"),
+            ("calendar_events", "odoo_archive_calendar_event"),
+            ("todos", "odoo_create_todo"),
+            ("todos", "odoo_update_todo"),
+            ("todos", "odoo_set_todo_state"),
+        ],
+    )
+    def test_calendar_and_todo_writes_need_the_write_scope(self, oauth_on, module_name, tool_name):
+        import importlib
 
-        for module in (read, write_safe, write_critical):
+        tool = getattr(importlib.import_module(f"odoo_mcp.tools.{module_name}"), tool_name)
+        oauth_on(FakeToken([SCOPE_READ]))
+        with pytest.raises(ScopeDenied, match=SCOPE_WRITE):
+            tool(instance="dev")
+
+    @pytest.mark.parametrize(
+        "module_name, tool_name",
+        [("calendar_events", "odoo_create_calendar_event"), ("todos", "odoo_create_todo"),
+         ("todos", "odoo_list_todos")],
+    )
+    def test_calendar_and_todo_tools_need_prod_scope_on_prod(self, oauth_on, module_name, tool_name):
+        import importlib
+
+        tool = getattr(importlib.import_module(f"odoo_mcp.tools.{module_name}"), tool_name)
+        oauth_on(FakeToken([SCOPE_WRITE]))
+        with pytest.raises(ScopeDenied, match=SCOPE_PROD):
+            tool(instance="prod")
+
+    def test_list_todos_is_read_tier(self, oauth_on, monkeypatch):
+        from odoo_mcp.tools import todos
+
+        oauth_on(FakeToken([SCOPE_READ]))
+        monkeypatch.setattr(todos, "get_client", lambda inst: (_ for _ in ()).throw(RuntimeError("reached")))
+        with pytest.raises(RuntimeError, match="reached"):
+            todos.odoo_list_todos(instance="dev")
+
+    def test_every_registered_tool_is_wrapped(self):
+        from odoo_mcp.tools import calendar_events, read, todos, write_critical, write_safe
+
+        for module in (read, write_safe, write_critical, calendar_events, todos):
             names = [n for n in dir(module) if n.startswith("odoo_")]
             assert names
             for name in names:

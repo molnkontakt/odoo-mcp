@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from odoo_mcp.access import AccessDenied
 from odoo_mcp.tools import write_safe
 from odoo_mcp.validators import ValidationError
 
@@ -174,7 +175,10 @@ class TestUploadAttachment:
         assert not [c for c in patched_client.calls if c[1] == "write"], "no main attachment unless asked"
 
     def test_set_as_main_writes_the_record(self, patched_client):
-        patched_client.state = {"ir.attachment": {"create": 778}, "hr.expense": {"write": True}}
+        patched_client.state = {
+            "ir.attachment": {"create": 778},
+            "hr.expense": {"write": True, "fields_get": {"message_main_attachment_id": {"type": "many2one"}}},
+        }
         result = write_safe.odoo_upload_attachment(
             instance="dev", res_model="hr.expense", res_id=7,
             filename="kvitto.jpg", data_base64="AAAA", mimetype="image/jpeg", set_as_main=True,
@@ -182,3 +186,60 @@ class TestUploadAttachment:
         assert result["main_attachment"] is True
         write = next(c for c in patched_client.calls if c[1] == "write")
         assert write[0] == "hr.expense" and write[2] == [[7], {"message_main_attachment_id": 778}]
+
+    @pytest.mark.parametrize(
+        "res_model",
+        ["res.users", "res.partner", "ir.config_parameter", "account.move.line", "mail.message",
+         "hr.employee", "project.project", "", "Account.Move"],
+    )
+    def test_other_models_are_refused_before_odoo(self, patched_client, res_model):
+        # set_as_main writes the target record, so a free model name would be a
+        # generic write on message_main_attachment_id.
+        with pytest.raises(AccessDenied, match="can only be uploaded"):
+            write_safe.odoo_upload_attachment(
+                instance="dev", res_model=res_model, res_id=1,
+                filename="x.pdf", data_base64="AAAA", set_as_main=True,
+            )
+        assert patched_client.calls == []
+
+    @pytest.mark.parametrize(
+        "res_model", ["account.move", "account.payment", "hr.expense", "calendar.event"],
+    )
+    def test_listed_models_are_accepted(self, patched_client, res_model):
+        patched_client.state = {"ir.attachment": {"create": 9}}
+        result = write_safe.odoo_upload_attachment(
+            instance="dev", res_model=res_model, res_id=1, filename="x.pdf", data_base64="AAAA",
+        )
+        assert result["res_model"] == res_model
+
+    def test_project_task_only_when_it_is_a_todo(self, patched_client):
+        task = {"id": 5, "name": "t", "state": "01_in_progress", "project_id": False, "parent_id": False}
+        patched_client.state = {
+            "ir.attachment": {"create": 9},
+            "project.task": {"get_todo_views_id": [], "read": [task], "write": True},
+        }
+        write_safe.odoo_upload_attachment(
+            instance="dev", res_model="project.task", res_id=5, filename="x.pdf", data_base64="AAAA",
+        )
+        assert [c for c in patched_client.calls if c[0] == "ir.attachment" and c[1] == "create"]
+
+        patched_client.calls.clear()
+        patched_client.state["project.task"]["read"] = [{**task, "project_id": [3, "Renovation"]}]
+        with pytest.raises(ValidationError, match="only handle"):
+            write_safe.odoo_upload_attachment(
+                instance="dev", res_model="project.task", res_id=5, filename="x.pdf", data_base64="AAAA",
+                set_as_main=True,
+            )
+        assert not [c for c in patched_client.calls if c[0] == "ir.attachment"]
+        assert not [c for c in patched_client.calls if c[1] == "write"]
+
+    @pytest.mark.parametrize("res_model", ["calendar.event", "hr.expense"])
+    def test_set_as_main_refused_without_the_field_and_nothing_uploaded(self, patched_client, res_model):
+        # Odoo 19: calendar.event and project.task lack the main-attachment mixin.
+        patched_client.state = {"ir.attachment": {"create": 9}, res_model: {"fields_get": {}}}
+        with pytest.raises(ValidationError, match="no main attachment"):
+            write_safe.odoo_upload_attachment(
+                instance="dev", res_model=res_model, res_id=1, filename="x.pdf", data_base64="AAAA",
+                set_as_main=True,
+            )
+        assert not [c for c in patched_client.calls if c[0] == "ir.attachment"]

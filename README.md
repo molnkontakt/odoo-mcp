@@ -80,7 +80,9 @@ Three tiers:
 
 - **read**: free, no confirmation, not audit-logged
 - **write_safe**: creates drafts only, audit-logged when configured,
-  validated against built-in and pluggable rules
+  validated against built-in and pluggable rules. Calendar events and to-dos
+  are written by curated tools that do not mail attendees or assignees unless
+  asked (`notify=true` on the calendar tools)
 - **write_critical**: requires `confirm=True`. First call without `confirm`
   returns a preview + validator outcome so the user can sanity-check
   before authorizing. Optional `idempotency_key` for replay-safety.
@@ -124,6 +126,8 @@ missing, instead of surfacing an XML-RPC fault:
 | Odoo module | What it enables | Without it |
 |---|---|---|
 | `hr_expense` (Expenses app) | `odoo_create_expense`, `odoo_list_employees`, `odoo_list_expense_categories` | those three tools answer "module not installed"; everything else works |
+| `calendar` (Calendar app) | `odoo_create_calendar_event`, `odoo_update_calendar_event`, `odoo_archive_calendar_event` | those three tools answer "module not installed" |
+| `project_todo` (To-do app) | `odoo_list_todos`, `odoo_create_todo`, `odoo_update_todo`, `odoo_set_todo_state` | those four tools answer "module not installed" |
 | `account_invoice_reminder` (OCA) | reminder level/date columns in `odoo_overdue_invoices` and `odoo_customer_statement` | the columns are left out |
 | `odoo_mcp_gateway` (this repo, `addons/`) | act-as-caller: every call runs as the OAuth user, with that user's Odoo rights | run with `ODOO_<NAME>_IMPERSONATE` unset; all calls use the service account's rights |
 

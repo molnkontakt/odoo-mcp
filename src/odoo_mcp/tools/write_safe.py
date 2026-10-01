@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from odoo_mcp.access import check_upload_target
 from odoo_mcp.app import mcp
 from odoo_mcp.audit import audit_call
 from odoo_mcp.auth import SCOPE_WRITE, requires_scope
-from odoo_mcp.client import enter_company_scope, get_client
+from odoo_mcp.client import enter_company_scope, get_client, model_fields
 from odoo_mcp.instances import Instance, resolve_instance
+from odoo_mcp.tools.todos import require_todo
 from odoo_mcp.validators import (
     InvoiceLinePayload,
     InvoicePayload,
@@ -696,18 +698,21 @@ def odoo_upload_attachment(
     set_as_main: bool = False,
     instance: Instance | None = None,
 ) -> dict[str, Any]:
-    """Attach a base64-encoded file to any record (e.g. a PDF onto an invoice).
+    """Attach a base64-encoded file to an invoice, payment, expense, calendar event or to-do.
 
     Feeds the OCR/invoice flow: upload a supplier PDF onto the draft bill.
     With `set_as_main=True` the file also becomes the record's main attachment
     (`message_main_attachment_id`): the one shown in the preview and counted by
     "missing document" filters. Odoo only promotes chatter uploads on its own,
     so use it for the receipt of an expense or the PDF of a supplier bill.
+    Calendar events and to-dos have no main attachment in Odoo; attach to
+    them without `set_as_main`.
     Large photos: downscale first (JPEG, ≤1600 px on the long side, quality ~80).
 
     Args:
         instance: instance name (see `odoo_list_companies` docs); may be omitted when only one is configured
-        res_model: model to attach to, e.g. "account.move", "hr.expense"
+        res_model: one of "account.move", "account.payment", "hr.expense",
+            "calendar.event", "project.task" (to-dos only: no project, no parent)
         res_id: record id
         filename: display name, e.g. "invoice_123.pdf"
         data_base64: file contents, base64-encoded (string)
@@ -717,6 +722,10 @@ def odoo_upload_attachment(
     Returns:
         {attachment_id, name, res_model, res_id, main_attachment}
     """
+    # Fixed list, checked before anything reaches Odoo: the tool writes to the
+    # target record (set_as_main), so a free model name would be a generic
+    # write on message_main_attachment_id.
+    check_upload_target(res_model)
     instance = resolve_instance(instance)
     client = get_client(instance)
     with audit_call(
@@ -724,6 +733,18 @@ def odoo_upload_attachment(
         params={"res_model": res_model, "res_id": int(res_id),
                 "filename": filename, "bytes_b64": len(data_base64), "set_as_main": set_as_main},
     ) as ctx:
+        if res_model == "project.task":
+            # Only to-dos, the same boundary as the to-do tools.
+            require_todo(client, int(res_id), instance)
+        if set_as_main:
+            # Only models with Odoo's main-attachment mixin have the field
+            # (Odoo 19: invoices, expenses — not calendar events or tasks).
+            # Ask before uploading, so a refusal leaves no stray attachment.
+            fields = model_fields(client, res_model, ["message_main_attachment_id"])
+            if not fields or "message_main_attachment_id" not in fields:
+                raise ValidationError(
+                    f"{res_model} has no main attachment on {instance}; upload without set_as_main."
+                )
         vals: dict[str, Any] = {
             "name": filename,
             "res_model": res_model,

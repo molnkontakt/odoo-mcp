@@ -48,6 +48,13 @@ Out of scope:
   model names for reading only via `ODOO_<NAME>_EXTRA_READ_MODELS`; denied
   models and namespaces can never be opened that way, and invalid values
   stop the server at start-up
+- `odoo_upload_attachment` only attaches to a fixed list of models
+  (`UPLOAD_TARGET_MODELS` in `src/odoo_mcp/access.py`): with `set_as_main` it
+  writes the target record, so it does not take a free model name
+- The calendar and to-do tools are curated writes on fixed models. They do not
+  send mail unless the caller asks (`notify=true`), refuse calendar events
+  maintained by a synchronisation module and tasks that belong to a project,
+  and archive rather than delete
 - Audit logging is recommended for production deployments — see PLAN.md
 
 ## Hall of Fame
