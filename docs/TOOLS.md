@@ -100,8 +100,10 @@ bespoke tool per model. All read-tier — they never mutate state.
 >
 > **Allowed:** `account.*`, `product.*`, `uom.*`, plus `res.partner`,
 > `res.country`, `res.country.state`, `res.currency`, `res.currency.rate`,
-> `res.company`, `ir.attachment`. Anything else fails closed — including models
-> introduced later by a new Odoo module.
+> `res.company`, `ir.attachment`, `hr.expense`, `calendar.event`,
+> `project.task`, `project.tags`. Anything else fails closed — including models
+> introduced later by a new Odoo module. Being readable here opens no write:
+> the calendar and to-do models are written only by their curated tools.
 >
 > **Denied models:** `res.users`, `res.groups`, `res.partner.bank`,
 > `mail.message`, `mail.followers`, and the `ir.*` administration models.
@@ -262,11 +264,23 @@ Create a `product.product` (`product_type`: `service` | `consu`).
 
 ### `odoo_upload_attachment(instance, res_model, res_id, filename, data_base64, mimetype?, set_as_main=False)`
 
-Attach a base64-encoded file to any record (e.g. a supplier PDF onto a draft
+Attach a base64-encoded file to a record (e.g. a supplier PDF onto a draft
 bill — feeds the OCR flow). `set_as_main=True` also makes it the record's main
 attachment (`message_main_attachment_id`), which Odoo otherwise only does for
 chatter uploads — use it for a receipt added after the expense was created.
 Photos: downscale first (JPEG, ≤1600 px on the long side, quality ~80).
+
+- `res_model` must be one of `account.move`, `account.payment`, `hr.expense`,
+  `calendar.event`, `project.task` (`UPLOAD_TARGET_MODELS` in
+  `odoo_mcp/access.py`). Anything else is refused before Odoo is called: with
+  `set_as_main` the tool writes the target record, so a free model name would
+  be a generic write.
+- `project.task` only for to-dos (no project, no parent task), the same
+  boundary as the to-do tools.
+- `set_as_main` needs Odoo's main-attachment field on the target. Odoo 19 has
+  it on invoices and expenses but not on calendar events or tasks; there the
+  call is refused before anything is uploaded.
+
 **Returns:** `{attachment_id, name, res_model, res_id, main_attachment}`.
 
 ### `odoo_create_expense(instance, employee_id, name, total_amount, date, category_code?, product_id?, receipt_base64?, receipt_filename?, receipt_mimetype?, payment_mode="own_account", description?)`
@@ -291,6 +305,106 @@ submitted, approved or posted.
   expense tools answer "module not installed" before touching anything.
 
 **Returns:** `{expense_id, name, state, employee, company, category, total_amount, currency, date, payment_mode, attachment_id}`.
+
+## Calendar and To-do
+
+Curated tools for Odoo's Calendar (`calendar.event`) and To-do app (a
+`project.task` without a project). The write tools are `odoo:write` tier (plus
+`odoo:prod` on a production instance, as for every tool); `odoo_list_todos` is
+read tier. Writes are audit-logged like the other write tools.
+
+> [!important] Quiet by default
+> Odoo mails attendees when an event is created or moved, and mails a user who
+> is assigned a task. These tools do neither unless asked:
+>
+> - **Calendar**, `notify=False` (default): the write carries the context keys
+>   `no_mail_to_attendees`, `skip_attendee_notification`, `dont_notify` and
+>   `mail_create_nolog`, and no reminders (`alarm_ids`) are set. `notify=True`
+>   leaves Odoo's behaviour alone: invitations on create, "date updated" on a
+>   new time (future events only).
+> - **To-do**, always: `mail_auto_subscribe_no_notify` (no "you have been
+>   assigned" mail), `mail_create_nolog` and `mail_notrack` (no tracking
+>   messages). Assignees still become followers, which sends nothing by itself.
+>
+> Verified against Odoo 19 in a throwaway database: no `mail.mail` and no e-mail
+> notification for any quiet call, assignment to another user included, while
+> the `notify=True` and no-context controls each produced the expected mails.
+
+**Times.** A time without an offset is wall-clock time in `timezone` (IANA name,
+default `Europe/Stockholm`, daylight saving handled); `2026-10-05T10:00:00+02:00`
+or `…Z` is taken as given. Odoo stores UTC; results show local time. An all-day
+event follows Odoo's own convention (`start_date`/`stop_date`, 08:00–18:00).
+
+### `odoo_create_calendar_event(name, date?, end_date?, start?, stop?, timezone="Europe/Stockholm", description?, location?, attendee_partner_ids?, notify=False)`
+
+All-day (`date`, optional `end_date`) or timed (`start` and `stop`).
+Without `attendee_partner_ids` Odoo makes the caller's contact the only
+attendee, as in its UI; with it, the list is exactly those `res.partner` ids
+(include your own to be on it). Plain-text `description` keeps its line breaks.
+
+**Returns:** `{event_id, name, allday, start, stop, timezone, location, organizer, attendees, recurring, active, notified, summary}`.
+
+### `odoo_update_calendar_event(event_id, name?, date?, end_date?, start?, stop?, timezone=…, description?, location?, attendee_partner_ids?, notify=False, recurrence_update="self_only")`
+
+Only the given fields change; `start` alone moves a timed event and keeps its
+length; `attendee_partner_ids` replaces the list; `""` clears `description` or
+`location`. `recurrence_update` (`self_only` | `future_events` | `all_events`)
+applies to events in a recurring series. **Returns:** the event plus `updated`.
+
+### `odoo_archive_calendar_event(event_id, recurrence_update="self_only")`
+
+Sets `active=False` — never deletes; the event stays restorable from Odoo's
+*Archived* filter. For a series it uses Odoo's own `action_mass_archive`, so
+`future_events` trims the recurrence as the UI does.
+**Returns:** `{event_id, name, archived, recurrence_update, archived_count}`.
+
+> [!warning] Synchronised events are refused
+> When the database has the field `l10n_se_cc_key` on `calendar.event` (set by
+> a calendar synchronisation module) and it is set, update and archive refuse:
+> the change would be overwritten by the next sync. For `future_events` /
+> `all_events` every event in the series is checked. The field is looked up with
+> `fields_get` per call, so the tools behave the same where the module is absent.
+
+### `odoo_list_todos(mine=True, status="open", query?, limit=50, timezone=…)`
+
+To-dos (no project, no parent), ordered like the To-do app. `mine` keeps the
+ones assigned to the caller — with act-as-caller that is the human, worked out
+from Odoo itself; `mine=False` lists every to-do Odoo lets the caller see.
+`status`: `open` (anything not done or cancelled) | `done` | `all`.
+**Returns:** `[{todo_id, name, state, done, deadline, deadline_at, priority, tags, assignees, active}]`.
+
+### `odoo_create_todo(name, description?, deadline?, user_ids?, tags?, priority?, timezone=…)`
+
+- `user_ids` (res.users ids): default is the caller, as in the To-do app. Odoo
+  always adds the caller to a new to-do, so its creator keeps seeing it.
+- `deadline`: `YYYY-MM-DD` (end of that day in `timezone`) or a date and time.
+- `tags`: names of **existing** `project.tags`, matched case-insensitively.
+  Unknown names are refused, never created — an assistant inventing tags would
+  litter the tag list.
+- `priority`: `0` (normal) … `3` (urgent); the To-do app shows `1` as a star.
+
+**Returns:** the to-do as in `odoo_list_todos`.
+
+### `odoo_update_todo(todo_id, name?, description?, deadline?, user_ids?, tags?, priority?, timezone=…)`
+
+Only the given fields change; `user_ids` and `tags` replace the lists; `""`
+clears `description` or `deadline`. Removing yourself from `user_ids` can hide
+the to-do from you (Odoo shows a private task only to its assignees).
+**Returns:** the to-do plus `updated`.
+
+### `odoo_set_todo_state(todo_id, done)`
+
+`done=True` sets `state="1_done"`, `done=False` sets `"01_in_progress"` — the
+values Odoo 17+ uses (`project.task.state`; `1_done`/`1_canceled` are the
+closed states). Re-opening a to-do that is already open changes nothing.
+**Returns:** `{todo_id, name, previous_state, state, done, changed}`.
+
+> [!note] Only to-dos
+> Every to-do tool reads the task first and refuses one with a project or a
+> parent task: project tasks have stages, customers and followers, and are out
+> of scope. On an instance without the To-do app (`project_todo`) or without
+> Calendar (`calendar`) the tools answer "module not installed" before touching
+> anything.
 
 ## Write tools — critical (Phase 3, shipped)
 

@@ -23,6 +23,9 @@ dependencies = [
     "fastmcp>=3.3.1,<4",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.4",
+    # IANA time zones for the calendar/to-do tools (zoneinfo). Slim container
+    # images and Windows have no system zone database; this is the fallback.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

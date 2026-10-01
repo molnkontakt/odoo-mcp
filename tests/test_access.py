@@ -11,7 +11,14 @@ from typing import Any
 import pytest
 
 from odoo_mcp import client as client_module
-from odoo_mcp.access import AccessDenied, check_fields, check_model, scrub_rows
+from odoo_mcp.access import (
+    UPLOAD_TARGET_MODELS,
+    AccessDenied,
+    check_fields,
+    check_model,
+    check_upload_target,
+    scrub_rows,
+)
 from odoo_mcp.tools import read as read_module
 
 
@@ -37,6 +44,9 @@ class TestModelPolicy:
             "ir.attachment",
             "hr.expense",
             "uom.uom",
+            "calendar.event",
+            "project.task",
+            "project.tags",
         ],
     )
     def test_accounting_domain_is_allowed(self, model):
@@ -80,6 +90,31 @@ class TestModelPolicy:
     def test_empty_model_is_denied(self):
         with pytest.raises(AccessDenied):
             check_model("")
+
+
+class TestUploadTargets:
+    """`odoo_upload_attachment` writes its target record; the list is exact and fixed."""
+
+    def test_exact_list(self):
+        assert frozenset({
+            "account.move", "account.payment", "hr.expense", "calendar.event", "project.task",
+        }) == UPLOAD_TARGET_MODELS
+
+    @pytest.mark.parametrize("model", sorted(UPLOAD_TARGET_MODELS))
+    def test_listed_models_pass(self, model):
+        check_upload_target(model)
+
+    @pytest.mark.parametrize(
+        "model", ["res.users", "res.partner", "account.move.line", "account.", "project.tags", "ir.attachment", ""],
+    )
+    def test_everything_else_is_refused(self, model):
+        with pytest.raises(AccessDenied):
+            check_upload_target(model)
+
+    def test_readable_does_not_mean_uploadable(self):
+        check_model("project.tags")
+        with pytest.raises(AccessDenied):
+            check_upload_target("project.tags")
 
 
 class TestFieldPolicy:

@@ -13,7 +13,7 @@ import pytest
 
 from odoo_mcp import instances, server
 from odoo_mcp.access import AccessDenied, check_model, parse_extra_read_models
-from odoo_mcp.tools import attachments, expenses, write_critical, write_safe
+from odoo_mcp.tools import attachments, calendar_events, expenses, todos, write_critical, write_safe
 from odoo_mcp.tools import read as read_module
 
 EXTRA_KEY = "ODOO_ACME_EXTRA_READ_MODELS"
@@ -131,7 +131,7 @@ class TestInstanceBinding:
 
 
 class TestNoWritePath:
-    WRITE_MODULES = (write_safe, write_critical, expenses)
+    WRITE_MODULES = (write_safe, write_critical, expenses, calendar_events, todos)
 
     def test_write_modules_never_consult_the_read_policy(self):
         # The extra list only reaches check_model, and only the read escape

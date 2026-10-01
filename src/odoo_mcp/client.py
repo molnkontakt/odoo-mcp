@@ -218,24 +218,34 @@ class OdooClient:
         )
 
 
-def model_installed(client: Any, model: str) -> bool:
-    """Is `model` present on the instance, i.e. is its module installed?
+def model_fields(client: Any, model: str, names: list[str]) -> dict[str, Any] | None:
+    """Which of `names` exist on `model`, or None when the model itself is missing.
 
-    Cheap `fields_get` probe (no rows, no ACL on data). Odoo answers a missing
-    model with a Fault ("Object x doesn't exist"), and the impersonation
-    gateway with "invalid model or method"; anything else is a real error and
-    is re-raised. Tools that depend on an optional module (hr_expense, …)
-    call this so the user gets "module not installed" instead of an XML-RPC
-    stack trace.
+    One `fields_get` probe (no rows, no ACL on data): Odoo answers it with only
+    the fields that exist, so this tells "module not installed" (None) apart
+    from "installed, but without the optional field" (a dict without the key).
+    Odoo answers a missing model with a Fault ("Object x doesn't exist"), and
+    the impersonation gateway with "invalid model or method"; anything else is
+    a real error and is re-raised.
     """
     try:
-        client.execute_kw(model, "fields_get", [["id"]], {"attributes": ["type"]})
+        result = client.execute_kw(model, "fields_get", [list(names)], {"attributes": ["type"]})
     except xmlrpc.client.Fault as fault:
         text = str(fault.faultString)
         if "doesn't exist" in text or "invalid model or method" in text:
-            return False
+            return None
         raise
-    return True
+    return dict(result or {})
+
+
+def model_installed(client: Any, model: str) -> bool:
+    """Is `model` present on the instance, i.e. is its module installed?
+
+    Tools that depend on an optional module (hr_expense, calendar, …) call
+    this so the user gets "module not installed" instead of an XML-RPC stack
+    trace. See `model_fields` for how the probe works.
+    """
+    return model_fields(client, model, ["id"]) is not None
 
 
 @lru_cache(maxsize=8)

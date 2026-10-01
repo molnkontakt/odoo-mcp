@@ -54,6 +54,29 @@ ALLOWED_MODELS: frozenset[str] = frozenset(
         # Expense claims are accounting data; hr.employee stays closed (see
         # tools/expenses.py for the curated lookup).
         "hr.expense",
+        # Calendar and To-do: readable here so a created record can be looked
+        # up; every write goes through the curated tools in
+        # tools/calendar_events.py and tools/todos.py, which refuse the cases
+        # those tools are not meant for (synced events, project tasks).
+        # project.tags is read-only everywhere: no tool creates tags.
+        "calendar.event",
+        "project.task",
+        "project.tags",
+    }
+)
+
+#: Models `odoo_upload_attachment` may attach a file to (and, with
+#: `set_as_main`, write `message_main_attachment_id` on). Exact names only:
+#: the tool writes to the target record, so it must not take a free model
+#: name. Kept apart from ALLOWED_MODELS on purpose — being readable is not a
+#: reason to be writable.
+UPLOAD_TARGET_MODELS: frozenset[str] = frozenset(
+    {
+        "account.move",     # supplier bills, invoices, journal entries
+        "account.payment",  # remittance advice, payment confirmations
+        "hr.expense",       # receipts
+        "calendar.event",   # agenda, minutes
+        "project.task",     # to-dos only; the tool checks that (tools/todos.py)
     }
 )
 
@@ -182,6 +205,17 @@ def check_model(model: str, *, extra_read_models: Collection[str] = ()) -> None:
         f"every instance, add it to ALLOWED_MODELS in odoo_mcp/access.py — "
         f"deliberately, not at call time."
     )
+
+
+def check_upload_target(model: str) -> None:
+    """Raise AccessDenied unless `odoo_upload_attachment` may write to `model`."""
+    name = (model or "").strip()
+    if name not in UPLOAD_TARGET_MODELS:
+        raise AccessDenied(
+            f"Attachments can only be uploaded to {', '.join(sorted(UPLOAD_TARGET_MODELS))}; "
+            f"got {name or 'no model'!r}. The upload also writes the target record "
+            f"(set_as_main), so the list is fixed in odoo_mcp/access.py."
+        )
 
 
 def check_fields(fields: list[str] | None) -> None:
