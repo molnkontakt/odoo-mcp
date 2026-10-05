@@ -296,6 +296,36 @@ MCP_OAUTH_CLIENT_SECRET=...        # keep in a secret manager, never in the unit
 
 No extra dependencies: `authlib` (JWT/JWKS) and `uvicorn` ship with `fastmcp`.
 
+### Microsoft Entra ID (`MCP_AUTH_MODE=entra`)
+
+Entra ID has no Dynamic Client Registration either, so `entra` is proxy mode on
+FastMCP's `AzureProvider`. Issuer, JWKS and audience follow from the tenant and
+the app registration, so only these are configured:
+
+```ini
+MCP_AUTH_MODE=entra
+MCP_PUBLIC_URL=https://odoo-mcp.example.com
+MCP_ENTRA_TENANT_ID=<directory (tenant) id>
+MCP_OAUTH_CLIENT_ID=<application (client) id>
+MCP_OAUTH_CLIENT_SECRET=...        # secret manager, never the unit file
+# Optional, default api://<client id>
+# MCP_ENTRA_IDENTIFIER_URI=api://<client id>
+```
+
+App registration (single tenant):
+
+- **Redirect URI** (web): `<MCP_PUBLIC_URL>/auth/callback`.
+- **Expose an API**: Application ID URI `api://<client id>` and the scopes
+  `odoo.read`, `odoo.write`, `odoo.critical`, `odoo.prod` — the server's
+  `odoo:*` scopes with a dot instead of the colon. `api.requestedAccessTokenVersion = 2`.
+- **Optional claims** on the access token: `email`, `upn`. The caller is
+  identified by `email` → `preferred_username` → `upn`; with
+  `ODOO_<NAME>_IMPERSONATE=1` that value must equal the Odoo user's login.
+- Every tier scope is *required* on the token (AzureProvider validates them all),
+  so a client must be granted the full set; the per-tool tiers are still
+  enforced by `@requires_scope`. Restrict who may sign in on the Entra side
+  (assignment required) or in Odoo (only linked users can be impersonated).
+
 > [!important] Give the OAuth proxy a persistent home
 > In `oauth-proxy` mode FastMCP keeps client registrations, codes and refresh
 > tokens in an encrypted file store under `$FASTMCP_HOME` (default
