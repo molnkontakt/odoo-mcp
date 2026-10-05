@@ -63,7 +63,7 @@ Use `MCP_AUTH_MODE=oauth-proxy` for Claude clients: they self-register through
 Dynamic Client Registration, which most IdPs (Authentik among them) do not
 offer, so the server fronts the IdP with a DCR endpoint and runs the real flow
 upstream with its own credentials. `MCP_AUTH_MODE=oauth` is the plain
-resource-server mode for callers that already hold a token.
+resource-server mode for callers that already hold a token. With Microsoft Entra ID as the identity provider, use `MCP_AUTH_MODE=entra` (see docs/DEPLOY.md).
 
 The OAuth endpoints (`/register`, `/token`, `/authorize`) are rate-limited per client IP
 (`MCP_RATELIMIT_PER_MINUTE`, default 30; `MCP_TRUST_FORWARDED_FOR=1` behind a proxy you control).

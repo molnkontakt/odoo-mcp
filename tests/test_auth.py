@@ -507,3 +507,90 @@ class TestDiscoveryUserAgent:
         auth.discover_oidc("https://auth.example.com/application/o/x/")
         assert seen["ua"] == auth.USER_AGENT
         assert "python-urllib" not in seen["ua"].lower()
+
+
+# --------------------------------------------------------------------------
+# Microsoft Entra ID (MCP_AUTH_MODE=entra)
+# --------------------------------------------------------------------------
+
+ENTRA_ENV = {
+    "MCP_AUTH_MODE": "entra",
+    "MCP_ENTRA_TENANT_ID": "00000000-0000-0000-0000-00000000aaaa",
+    "MCP_OAUTH_CLIENT_ID": "00000000-0000-0000-0000-00000000bbbb",
+    "MCP_OAUTH_CLIENT_SECRET": "s3cret",
+    "MCP_PUBLIC_URL": "https://odoo-mcp.example.com",
+}
+
+
+class TestEntraSettings:
+    def test_entra_needs_no_issuer_or_audience(self):
+        settings = auth.load_auth_settings(ENTRA_ENV)
+        assert settings.mode == "entra"
+        assert settings.enabled
+        assert settings.tenant_id == ENTRA_ENV["MCP_ENTRA_TENANT_ID"]
+        assert settings.issuer is None
+        assert settings.identifier_uri is None
+
+    def test_entra_requires_tenant_and_client_credentials(self):
+        with pytest.raises(AuthConfigError) as exc:
+            auth.load_auth_settings({"MCP_AUTH_MODE": "entra"})
+        message = str(exc.value)
+        for name in ("MCP_ENTRA_TENANT_ID", "MCP_OAUTH_CLIENT_ID",
+                     "MCP_OAUTH_CLIENT_SECRET", "MCP_PUBLIC_URL"):
+            assert name in message
+        assert "odoo.read" in message
+
+    def test_entra_keeps_the_redirect_allow_list(self):
+        """Same open-redirector concern as proxy mode."""
+        settings = auth.load_auth_settings(ENTRA_ENV)
+        assert settings.allowed_client_redirect_uris == auth.DEFAULT_CLIENT_REDIRECT_URIS
+
+    def test_identifier_uri_can_be_set(self):
+        settings = auth.load_auth_settings(
+            dict(ENTRA_ENV, MCP_ENTRA_IDENTIFIER_URI="api://odoo-mcp.example.com"))
+        assert settings.identifier_uri == "api://odoo-mcp.example.com"
+
+    def test_provider_is_azure_with_all_tier_scopes(self):
+        provider = auth.build_auth_provider(auth.load_auth_settings(ENTRA_ENV))
+        assert type(provider).__name__ == "AzureProvider"
+        assert provider.identifier_uri == f"api://{ENTRA_ENV['MCP_OAUTH_CLIENT_ID']}"
+
+
+class TestEntraScopes:
+    def test_entra_names_use_dots(self):
+        assert [auth.entra_scope_name(s) for s in auth.ALL_SCOPES] == [
+            "odoo.read", "odoo.write", "odoo.critical", "odoo.prod"]
+
+    def test_short_and_prefixed_names_map_to_server_scopes(self):
+        assert auth.normalize_scope("odoo.read") == SCOPE_READ
+        assert auth.normalize_scope("api://abc/odoo.critical") == SCOPE_CRITICAL
+        assert auth.normalize_scope(SCOPE_WRITE) == SCOPE_WRITE
+
+    def test_unknown_names_are_not_turned_into_permissions(self):
+        """Only the four real scopes map; anything else passes through untouched."""
+        assert auth.normalize_scope("odoo.admin") == "odoo.admin"
+        assert auth.normalize_scope("User.Read") == "User.Read"
+        assert auth.expand_scopes(["odoo.admin", "User.Read"]) == {"odoo.admin", "User.Read"}
+
+    def test_entra_scp_claim_grants_the_tiers(self):
+        granted = auth.expand_scopes(["odoo.critical", "odoo.prod"])
+        assert {SCOPE_CRITICAL, SCOPE_WRITE, SCOPE_READ, SCOPE_PROD} <= granted
+
+    def test_identity_from_an_entra_token(self, monkeypatch):
+        auth.set_auth_settings(auth.load_auth_settings(ENTRA_ENV))
+        token = FakeToken(["odoo.read", "odoo.write"],
+                          claims={"sub": "pairwise-sub", "oid": "o-1",
+                                  "preferred_username": "anna@example.com"})
+        monkeypatch.setattr(auth, "_current_token", lambda: token)
+        ident = auth.current_identity()
+        assert ident.actor == "anna@example.com"
+        assert SCOPE_WRITE in ident.scopes and SCOPE_READ in ident.scopes
+        auth.check_scopes(SCOPE_WRITE)
+        with pytest.raises(ScopeDenied):
+            auth.check_scopes(SCOPE_CRITICAL)
+
+    def test_upn_is_a_fallback_actor(self, monkeypatch):
+        auth.set_auth_settings(auth.load_auth_settings(ENTRA_ENV))
+        token = FakeToken(["odoo.read"], claims={"sub": "s", "upn": "per@example.com"})
+        monkeypatch.setattr(auth, "_current_token", lambda: token)
+        assert auth.current_identity().actor == "per@example.com"

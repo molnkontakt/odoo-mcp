@@ -84,7 +84,7 @@ _IMPLIES: dict[str, tuple[str, ...]] = {
     SCOPE_WRITE: (SCOPE_READ,),
 }
 
-AuthMode = Literal["none", "oauth", "oauth-proxy"]
+AuthMode = Literal["none", "oauth", "oauth-proxy", "entra"]
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -117,6 +117,11 @@ class AuthSettings:
     client_id: str | None = None
     client_secret: str | None = None
     allowed_client_redirect_uris: tuple[str, ...] = ()
+    #: Entra mode only: the directory (tenant) id and, optionally, the
+    #: Application ID URI the scopes are exposed under (default
+    #: ``api://<client_id>``).
+    tenant_id: str | None = None
+    identifier_uri: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -172,13 +177,15 @@ def load_auth_settings(env: dict[str, str] | None = None) -> AuthSettings:
     """
     src = os.environ if env is None else env
     mode = (src.get("MCP_AUTH_MODE") or "none").strip().lower()
-    if mode not in ("none", "oauth", "oauth-proxy"):
+    if mode not in ("none", "oauth", "oauth-proxy", "entra"):
         raise AuthConfigError(
-            f"MCP_AUTH_MODE must be 'none', 'oauth' or 'oauth-proxy', "
+            f"MCP_AUTH_MODE must be 'none', 'oauth', 'oauth-proxy' or 'entra', "
             f"got {mode!r}."
         )
     if mode == "none":
         return AuthSettings(mode="none")
+    if mode == "entra":
+        return _load_entra_settings(src)
 
     issuer = (src.get("MCP_OAUTH_ISSUER") or "").strip()
     audience = (src.get("MCP_OAUTH_AUDIENCE") or "").strip()
@@ -228,6 +235,77 @@ def load_auth_settings(env: dict[str, str] | None = None) -> AuthSettings:
             else DEFAULT_CLIENT_REDIRECT_URIS
         ),
     )
+
+
+def _load_entra_settings(src: Any) -> AuthSettings:
+    """Microsoft Entra ID as the upstream IdP (``MCP_AUTH_MODE=entra``).
+
+    Entra has no Dynamic Client Registration either, so this is proxy mode,
+    built on FastMCP's ``AzureProvider``: it knows Entra's endpoints, prefixes
+    the scopes with the Application ID URI on the way up and validates the
+    Entra access token (issuer ``.../<tenant>/v2.0``, audience = the app).
+    Issuer, audience and JWKS therefore follow from the tenant and client id
+    and are not configured separately.
+    """
+    tenant_id = (src.get("MCP_ENTRA_TENANT_ID") or "").strip()
+    base_url = (src.get("MCP_PUBLIC_URL") or "").strip()
+    client_id = (src.get("MCP_OAUTH_CLIENT_ID") or "").strip()
+    client_secret = (src.get("MCP_OAUTH_CLIENT_SECRET") or "").strip()
+    redirects = (src.get("MCP_OAUTH_CLIENT_REDIRECT_URIS") or "").strip()
+    missing = [name for name, value in (
+        ("MCP_ENTRA_TENANT_ID", tenant_id),
+        ("MCP_PUBLIC_URL", base_url),
+        ("MCP_OAUTH_CLIENT_ID", client_id),
+        ("MCP_OAUTH_CLIENT_SECRET", client_secret),
+    ) if not value]
+    if missing:
+        raise AuthConfigError(
+            f"MCP_AUTH_MODE=entra requires {', '.join(missing)}. "
+            f"MCP_ENTRA_TENANT_ID is the directory (tenant) id, "
+            f"MCP_OAUTH_CLIENT_ID/SECRET the app registration that exposes "
+            f"the {', '.join(entra_scope_name(s) for s in ALL_SCOPES)} scopes, "
+            f"MCP_PUBLIC_URL this server's external base URL (its "
+            f"/auth/callback must be a redirect URI on the app registration)."
+        )
+    return AuthSettings(
+        mode="entra",
+        base_url=base_url,
+        resource_name=(src.get("MCP_RESOURCE_NAME") or "odoo-mcp").strip(),
+        client_id=client_id,
+        client_secret=client_secret,
+        allowed_client_redirect_uris=(
+            tuple(u.strip() for u in redirects.split(",") if u.strip())
+            if redirects
+            else DEFAULT_CLIENT_REDIRECT_URIS
+        ),
+        tenant_id=tenant_id,
+        identifier_uri=(src.get("MCP_ENTRA_IDENTIFIER_URI") or "").strip() or None,
+    )
+
+
+def entra_scope_name(scope: str) -> str:
+    """``odoo:read`` → ``odoo.read``: the name the scope is exposed under in Entra.
+
+    Entra scope values are kept to letters, digits and dots, so the colon used
+    everywhere else in this server is swapped for a dot at the boundary.
+    """
+    return scope.replace(":", ".")
+
+
+def normalize_scope(scope: str) -> str:
+    """Map a scope as it arrives in a token to this server's own name.
+
+    Entra puts the short name in ``scp`` (``odoo.read``) and may echo the full
+    ``api://<app>/odoo.read`` elsewhere; both become ``odoo:read``. Scopes that
+    are not this server's pass through unchanged, so nothing outside the
+    ``odoo`` namespace can be turned into a permission by the mapping.
+    """
+    name = scope.rsplit("/", 1)[-1]
+    if name.startswith("odoo."):
+        candidate = "odoo:" + name[len("odoo."):]
+        if candidate in ALL_SCOPES:
+            return candidate
+    return scope
 
 
 def discover_oidc(issuer: str, *, timeout: float = 10.0) -> dict[str, Any]:
@@ -305,6 +383,8 @@ def build_auth_provider(settings: AuthSettings | None = None) -> Any | None:
     settings = settings or get_auth_settings()
     if not settings.enabled:
         return None
+    if settings.mode == "entra":
+        return _build_entra_provider(settings)
 
     # Imported lazily: stdio deployments should not pay for authlib/JWKS
     # imports, and `app.py` is imported by every test.
@@ -371,11 +451,37 @@ def build_auth_provider(settings: AuthSettings | None = None) -> Any | None:
     )
 
 
+def _build_entra_provider(settings: AuthSettings) -> Any:
+    """FastMCP ``AzureProvider`` with this server's tier scopes.
+
+    Every tier scope is *required* on the token (``AzureProvider`` validates
+    them all), so a client must ask for the full set; per-call tiers are still
+    enforced by ``@requires_scope``. ``openid profile email`` are requested
+    upstream so the token carries the e-mail that identifies the caller for
+    the audit log and for impersonation.
+    """
+    from fastmcp.server.auth.providers.azure import AzureProvider
+
+    assert settings.tenant_id and settings.client_id and settings.client_secret
+    assert settings.base_url
+    return AzureProvider(
+        client_id=str(settings.client_id),
+        client_secret=str(settings.client_secret),
+        tenant_id=str(settings.tenant_id),
+        required_scopes=[entra_scope_name(s) for s in ALL_SCOPES],
+        additional_authorize_scopes=["openid", "profile", "email"],
+        base_url=settings.base_url,
+        identifier_uri=settings.identifier_uri,
+        allowed_client_redirect_uris=list(settings.allowed_client_redirect_uris),
+        require_authorization_consent=True,
+    )
+
+
 def expand_scopes(scopes: object) -> frozenset[str]:
     """Expand granted scopes through the tier implications."""
     if not isinstance(scopes, (list, tuple, set, frozenset)):
         return frozenset()
-    granted = {str(s) for s in scopes}
+    granted = {normalize_scope(str(s)) for s in scopes}
     changed = True
     while changed:
         changed = False
@@ -411,6 +517,7 @@ def current_identity() -> Identity:
     actor = (
         claims.get("email")
         or claims.get("preferred_username")
+        or claims.get("upn")
         or claims.get("name")
         or sub
     )
